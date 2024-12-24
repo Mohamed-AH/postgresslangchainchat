@@ -69,7 +69,6 @@ What would you like to know? What is a VPC?
 If you're interested in building something more robust, check out:
 - [LangChain Documentation](https://python.langchain.com/docs/get_started/introduction)
 - [RAG Best Practices](https://www.pinecone.io/learn/retrieval-augmented-generation/)
-- [Production RAG Architectures](https://techcommunity.microsoft.com/t5/ai-azure-ai-services-blog/building-rag-applications-with-azure-ai-search/ba-p/3960809)
 
 ## Contributing
 
