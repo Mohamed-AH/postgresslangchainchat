@@ -1,6 +1,6 @@
-# PostgreSQL RAG System - Proof of Concept
+# PostgreSQL Source Chat with LangChain
 
-A simple proof-of-concept demonstrating how to build a basic question-answering system using PostgreSQL, LangChain, and Gemini. This project is meant for learning and experimentation.
+A proof of concept demonstrating how to build a chatbot that answers questions using content stored in a PostgreSQL database, powered by LangChain and Gemini.
 
 ## What is this?
 
