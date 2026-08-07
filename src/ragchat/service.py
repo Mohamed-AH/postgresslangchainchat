@@ -85,8 +85,11 @@ class RAGService:
         session = self._session_factory()
         try:
             count = repository.replace_all_sections(session, sections)
-            # Rebuild the vector index from scratch to stay in sync with the table.
+            # Rebuild the vector index from scratch to stay in sync with the table:
+            # drop the collection, recreate it, then load the fresh embeddings.
+            # (langchain-postgres does not auto-create a collection on add.)
             self._vector_store.delete_collection()
+            self._vector_store.create_collection()
             if documents:
                 self._vector_store.add_documents(documents)
             session.commit()
@@ -138,12 +141,13 @@ class RAGService:
 def build_service() -> RAGService:
     """Wire a fully configured :class:`RAGService` from application settings."""
     from ragchat.config import get_settings
-    from ragchat.db.engine import get_session_factory
+    from ragchat.db.engine import get_session_factory, init_db
     from ragchat.rag.embeddings import build_embeddings
     from ragchat.rag.pipeline import build_rag_chain
     from ragchat.rag.vectorstore import build_vector_store
 
     settings = get_settings()
+    init_db()  # ensure the knowledge_base table exists (idempotent)
     embeddings = build_embeddings(settings)
     vector_store = build_vector_store(embeddings, settings)
     retriever = vector_store.as_retriever(search_kwargs={"k": settings.retriever_k})

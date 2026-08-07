@@ -40,8 +40,9 @@ def test_ingest_writes_relational_and_vectors(
     # Relational store persisted and committed.
     with session_factory() as session:
         assert repository.count_sections(session) == 2
-    # Vector index rebuilt: cleared once, then documents added.
+    # Vector index rebuilt: dropped, recreated, then documents added.
     assert fake_vector_store.delete_collection_calls == 1
+    assert fake_vector_store.create_collection_calls == 1
     assert len(fake_vector_store.documents) == 2
 
 

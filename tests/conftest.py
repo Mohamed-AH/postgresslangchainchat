@@ -44,11 +44,15 @@ class FakeVectorStore:
     def __init__(self) -> None:
         self.documents: list[Document] = []
         self.delete_collection_calls = 0
+        self.create_collection_calls = 0
         self.fail_on_add = False
 
     def delete_collection(self) -> None:
         self.delete_collection_calls += 1
         self.documents = []
+
+    def create_collection(self) -> None:
+        self.create_collection_calls += 1
 
     def add_documents(self, documents: list[Document]) -> None:
         if self.fail_on_add:
