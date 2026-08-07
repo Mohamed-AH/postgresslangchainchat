@@ -7,7 +7,7 @@ dependency injection, so no network or API key is needed to exercise retrieval l
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 from langchain_core.embeddings import Embeddings
 
@@ -21,9 +21,14 @@ def build_embeddings(settings: Settings | None = None) -> Embeddings:
     # optional provider SDK to be installed or configured.
     from langchain_cohere import CohereEmbeddings
 
+    # Referenced through an ``Any`` binding: CohereEmbeddings populates its ``client`` /
+    # ``async_client`` fields in a validator, but pydantic's mypy plugin reports them as
+    # required positional args. Constructing via ``Any`` keeps the call valid whether or
+    # not the provider SDK is installed, without an ignore that goes stale either way.
+    embeddings_cls: Any = CohereEmbeddings
     return cast(
         Embeddings,
-        CohereEmbeddings(
+        embeddings_cls(
             cohere_api_key=settings.cohere_api_key.get_secret_value(),
             model=settings.embedding_model,
         ),
