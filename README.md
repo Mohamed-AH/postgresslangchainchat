@@ -1,96 +1,118 @@
-# PostgreSQL Source Chat with LangChain
+# ragchat
 
-A proof of concept demonstrating how to build a chatbot that answers questions using content stored in a PostgreSQL database, powered by LangChain and Gemini.
+A retrieval-augmented Q&A service over a document knowledge base. Ask a question in
+natural language; get an answer grounded in your content, with the source passages it
+was drawn from.
 
-## What is this?
+Built on **PostgreSQL + pgvector**, **LangChain (LCEL)**, **Cohere** embeddings, and
+**Google Gemini** — exposed as a **FastAPI** service and a **Typer** CLI.
 
-This POC shows how to:
-- Store content in PostgreSQL
-- Generate embeddings using Cohere
-- Use Pinecone for vector storage and search
-- Generate answers using Google's Gemini model
-- Chain everything together with LangChain
+[![CI](https://github.com/Mohamed-AH/postgresslangchainchat/actions/workflows/ci.yml/badge.svg)](https://github.com/Mohamed-AH/postgresslangchainchat/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.11+-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-## Important Notes
+---
 
-⚠️ This is a **proof of concept** with several limitations:
-- Basic error handling
-- Simplified document processing
-- No input validation
-- Limited security measures
-- No tests
-- Not suitable for production use without further development
+## Architecture
 
-## Getting Started
+One datastore, two flows. PostgreSQL holds both the canonical text (`knowledge_base`
+table) **and** the vector index (via pgvector) — there is no separate vector database to
+run, pay for, or keep in sync.
 
-### 1. Install Dependencies
-```bash
-pip install langchain langchain-google-genai langchain-cohere langchain-pinecone python-dotenv psycopg2-binary pandas sqlalchemy pinecone-client
+```mermaid
+flowchart LR
+    MD[content.md] -->|parse| ING[Ingestion]
+    ING -->|source of truth| KB[(knowledge_base<br/>table)]
+    ING -->|embed + index| VEC[(pgvector<br/>collection)]
+    KB -.same PostgreSQL.- VEC
+
+    Q[Question] --> API[FastAPI / CLI]
+    API --> SVC[RAGService]
+    SVC -->|similarity search| VEC
+    VEC -->|top-k docs| CHAIN[LCEL chain]
+    CHAIN -->|grounded prompt| LLM[Gemini]
+    LLM -->|answer + sources| API
 ```
 
-### 2. Set Up Environment
-Create a `.env` file:
-```env
-DATABASE_URL=postgresql://user:password@host:port/dbname
-COHERE_API_KEY=your_key
-GOOGLE_API_KEY=your_key
-PINECONE_API_KEY=your_key
-```
+The codebase is layered so each concern is isolated and independently testable:
 
-### 3. Load Sample Data
-```bash
-python setup_mock_data.py
-```
+| Layer | Module | Responsibility |
+|-------|--------|----------------|
+| Config | `ragchat.config` | Typed, validated settings from env / `.env` |
+| Ingestion | `ragchat.ingestion.parser` | Markdown → structured `Section`s |
+| Persistence | `ragchat.db.*` | SQLAlchemy models, engine, repository |
+| Retrieval | `ragchat.rag.*` | Embeddings, pgvector store, LCEL chain |
+| Orchestration | `ragchat.service` | `RAGService`: ingest + ask, dependency-injected |
+| Interfaces | `ragchat.api`, `ragchat.cli` | FastAPI service and Typer CLI |
 
-### 4. Run the System
-```bash
-python qa_system.py
-```
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design decisions and trade-offs.
 
-## Project Files
+---
 
-- `setup_mock_data.py`: Loads content into PostgreSQL
-- `qa_system.py`: QA system implementation with Pinecone integration
-- `.env.example`: Environment variables template
+## Quickstart
 
-## Example Usage
+### Run everything with Docker
 
 ```bash
-$ python qa_system.py
-Starting QA System setup...
-[System initialization messages]
-QA System is ready! Type 'exit' to quit.
-
-What would you like to know? What is a VPC?
-[System provides answer with sources]
+cp .env.example .env      # then add your COHERE_API_KEY and GOOGLE_API_KEY
+docker compose up --build
 ```
 
-## Key Features
+This starts PostgreSQL + pgvector and the API. Then load the sample corpus and ask a
+question:
 
-- **Quick Setup**: Simple instructions to launch your chatbot with PostgreSQL, LangChain, and Pinecone.
-- **Efficient Data Loading**: Loads PostgreSQL data in chunks to optimize memory.
-- **Powerful Integrations**: Uses Cohere for embeddings and Pinecone for vector storage.
-- **Accurate Answers**: Utilizes Google's Gemini model for dynamic question answering.
-- **User-Friendly CLI**: Easy command-line interface for interaction.
-- **Customizable Architecture**: Modular design for easy experimentation.
+```bash
+docker compose exec app ragchat ingest content.md
 
+curl -s localhost:8000/ask \
+  -H 'content-type: application/json' \
+  -d '{"question": "What is a VPC?"}' | jq
+```
 
-## Learning Resources
+Interactive API docs (OpenAPI/Swagger) are at <http://localhost:8000/docs>.
 
-If you're interested in building something more robust, check out:
-- [LangChain Documentation](https://python.langchain.com/docs/get_started/introduction)
-- [RAG Best Practices](https://www.pinecone.io/learn/retrieval-augmented-generation/)
-- [Pinecone Documentation](https://docs.pinecone.io/docs/overview)
+### Run locally
 
-## Contributing
+```bash
+make install                      # pip install -e ".[dev]"
+# point DATABASE_URL at a pgvector-enabled PostgreSQL, set the API keys
+ragchat ingest content.md
+ragchat ask "What is a VPC?"
+ragchat serve                     # start the API
+```
 
-This is a learning project. Feel free to experiment with it! Some interesting areas to explore:
-- Advanced text chunking strategies
-- Improved prompt engineering
-- Comprehensive error handling
-- Testing approaches
-- Fine-tuning vector search parameters
-- Experimenting with different embedding models
+---
+
+## API
+
+| Method | Path       | Description |
+|--------|------------|-------------|
+| GET    | `/health`  | Readiness probe — runs `SELECT 1`; returns **503** if the DB is unreachable |
+| POST   | `/ask`     | `{ "question": "..." }` → `{ "answer": "...", "sources": [...] }` |
+| POST   | `/ingest`  | `{ "path": "content.md" }` → rebuilds the knowledge base and vector index |
+
+---
+
+## Development
+
+```bash
+make check     # ruff (lint + format), mypy --strict, and pytest
+```
+
+- **Tests run with no API keys and no live database.** Embeddings, the LLM, and pgvector
+  are replaced with deterministic fakes; the relational layer runs on SQLite in-memory —
+  so the suite is fast, hermetic, and safe for CI. See [Testing](docs/ARCHITECTURE.md#testing-strategy).
+- **CI** (GitHub Actions) runs the exact same gates on every push and PR.
+- **Typed throughout** and checked with `mypy --strict`.
+
+Individual gates: `make lint`, `make typecheck`, `make test`.
+
+---
+
+## Tech stack
+
+Python 3.11 · FastAPI · Typer · SQLAlchemy 2.0 · pgvector · LangChain (LCEL) ·
+Cohere embeddings · Google Gemini · pydantic-settings · pytest · ruff · mypy · Docker
 
 ## License
 
