@@ -74,8 +74,9 @@ sources). Interactive API docs (OpenAPI/Swagger) are at <http://localhost:8000/d
 
 ### Deploy it free
 
-The whole thing runs on free tiers — **Render** (web UI + API + an hourly cleanup cron)
-with **Neon** for PostgreSQL + pgvector. A `render.yaml` blueprint is included; see
+The whole thing runs on free tiers — **Render** (web UI + API) with **Neon** for
+PostgreSQL + pgvector, and a **GitHub Actions** workflow for scheduled cleanup. A
+`render.yaml` blueprint is included; see
 **[DEPLOY.md](DEPLOY.md)** for step-by-step instructions. It's multi-tenant (per-session
 isolation), with upload caps, per-session rate limits, a global daily budget, and
 auto-expiring session data to protect the shared API keys.
