@@ -144,6 +144,14 @@ def ask(payload: AskRequest, service: RAGService = Depends(get_service)) -> AskR
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
+    except Exception as exc:
+        # Provider/model failures (e.g. an unavailable model) must surface as clean JSON,
+        # not a raw 500, so the UI can show what actually went wrong.
+        logger.exception("ask failed for session")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"The model request failed: {exc}"[:400],
+        ) from exc
     return AskResponse(
         answer=result.answer,
         sources=[SourceSchema(content=s.content, metadata=s.metadata) for s in result.sources],
@@ -185,5 +193,12 @@ async def ingest_file(
     except (TooManySectionsError, EmptyDocumentError) as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    except Exception as exc:
+        # Embedding/provider failures return clean JSON rather than a raw 500.
+        logger.exception("ingest failed for session")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Ingestion failed: {exc}"[:400],
         ) from exc
     return IngestResponse(sections_written=result.sections_written)

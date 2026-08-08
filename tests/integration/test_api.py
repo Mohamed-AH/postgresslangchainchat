@@ -65,6 +65,19 @@ def test_ingest_file_rejects_unsupported_type(api_client) -> None:
     assert response.status_code == 415
 
 
+def test_ask_provider_error_returns_clean_json_502(api_client) -> None:
+    from ragchat.api.routes import get_service
+
+    class _BoomService:
+        def ask(self, question: str):
+            raise RuntimeError("Error calling model 'x' (NOT_FOUND): 404")
+
+    api_client.app.dependency_overrides[get_service] = lambda: _BoomService()
+    response = api_client.post("/ask", json={"question": "hi"})
+    assert response.status_code == 502
+    assert "model request failed" in response.json()["detail"]
+
+
 def test_ask_is_rate_limited(api_client) -> None:
     from ragchat.api.guards import DailyBudget, Guards, RateLimiter
 
