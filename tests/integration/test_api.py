@@ -129,6 +129,28 @@ def test_free_allowance_gate_prompts_for_byo_keys(api_client) -> None:
     assert second.json()["detail"]["byok_required"] is True
 
 
+def test_spoofed_forwarded_for_cannot_mint_new_allowance(api_client) -> None:
+    # Same real IP (rightmost, added by the trusted proxy) => one shared allowance,
+    # even if the client varies the spoofable leftmost X-Forwarded-For entries.
+    api_client.app.state.guards = _guards(daily_free_allowance=1)
+    r1 = api_client.post(
+        "/ask", json={"question": "a"}, headers={"X-Forwarded-For": "9.9.9.9, 5.5.5.5"}
+    )
+    r2 = api_client.post(
+        "/ask", json={"question": "b"}, headers={"X-Forwarded-For": "8.8.8.8, 5.5.5.5"}
+    )
+    assert r1.status_code == 200
+    assert r2.status_code == 429
+
+
+def test_distinct_ips_get_separate_allowances(api_client) -> None:
+    api_client.app.state.guards = _guards(daily_free_allowance=1)
+    r1 = api_client.post("/ask", json={"question": "a"}, headers={"X-Forwarded-For": "1.1.1.1"})
+    r2 = api_client.post("/ask", json={"question": "b"}, headers={"X-Forwarded-For": "2.2.2.2"})
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+
+
 def test_byo_keys_bypass_the_free_allowance(api_client) -> None:
     api_client.app.state.guards = _guards(daily_free_allowance=1)
     headers = {"X-Cohere-Api-Key": "user-cohere", "X-Google-Api-Key": "user-google"}

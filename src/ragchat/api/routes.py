@@ -108,17 +108,25 @@ def _too_many(retry_after: int, detail: object) -> HTTPException:
     )
 
 
-def _client_ip(request: Request) -> str:
-    """Best-effort client IP, honoring the proxy's X-Forwarded-For (leftmost hop)."""
+def _client_ip(request: Request, trusted_hops: int = 1) -> str:
+    """Best-effort client IP that resists a client-spoofed ``X-Forwarded-For``.
+
+    Proxies *append* to X-Forwarded-For, so the trustworthy client IP is the entry our
+    trusted proxy added — counted from the right, ``trusted_hops`` in. Any values a client
+    prepends sit to the left and are ignored.
+    """
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        return forwarded.split(",")[0].strip()
+        parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+        if parts:
+            return parts[max(0, len(parts) - trusted_hops)]
     return request.client.host if request.client else "unknown"
 
 
-def _ip_scope(request: Request, salt: str) -> str:
+def _ip_scope(request: Request, guards: Guards) -> str:
     """A privacy-preserving, salted hash of the client IP for usage counting."""
-    digest = hashlib.sha256(f"{salt}:{_client_ip(request)}".encode()).hexdigest()[:32]
+    ip = _client_ip(request, guards.trusted_proxy_hops)
+    digest = hashlib.sha256(f"{guards.hash_salt}:{ip}".encode()).hexdigest()[:32]
     return f"ip:{digest}"
 
 
@@ -169,7 +177,7 @@ def guard_ask(
     with session_factory() as db:
         remaining = -1
         if guards.daily_free_allowance > 0:
-            ip_count = repository.bump_usage(db, _ip_scope(request, guards.hash_salt), day)
+            ip_count = repository.bump_usage(db, _ip_scope(request, guards), day)
             if ip_count > guards.daily_free_allowance:
                 db.rollback()
                 raise _too_many(

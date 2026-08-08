@@ -51,6 +51,7 @@ class Guards:
     daily_free_allowance: int  # shared-key asks/day per user (0 = unlimited)
     daily_budget: int  # shared-key asks/day across the instance (0 = unlimited)
     hash_salt: str  # salt for hashing client IPs before storing usage
+    trusted_proxy_hops: int = 1  # reverse-proxy hops in front of the app (Render = 1)
 
     @classmethod
     def from_settings(cls, settings: Settings) -> Guards:
@@ -60,4 +61,5 @@ class Guards:
             daily_free_allowance=settings.daily_free_allowance,
             daily_budget=settings.daily_request_budget,
             hash_salt=settings.usage_hash_salt.get_secret_value(),
+            trusted_proxy_hops=settings.trusted_proxy_hops,
         )

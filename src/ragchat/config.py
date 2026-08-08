@@ -108,6 +108,13 @@ class Settings(BaseSettings):
         description="Salt for hashing client IPs before storing usage counters (privacy). "
         "Set a real secret in production.",
     )
+    trusted_proxy_hops: int = Field(
+        default=1,
+        ge=1,
+        description="Number of trusted reverse-proxy hops in front of the app (Render = 1). "
+        "Used to read the real client IP from the right of X-Forwarded-For, resisting "
+        "client-spoofed values.",
+    )
 
     # --- Observability -----------------------------------------------------
     log_level: str = Field(default="INFO")

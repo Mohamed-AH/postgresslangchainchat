@@ -74,6 +74,7 @@ All limits are environment variables you can change in the Render dashboard:
 | `DAILY_FREE_ALLOWANCE` | `10` | Free shared-key asks/day **per user** before they're prompted for their own keys (0 = unlimited) |
 | `DAILY_REQUEST_BUDGET` | `1000` | Instance-wide shared-key asks/day — the absolute cost ceiling (0 = off) |
 | `USAGE_HASH_SALT` | `change-me-in-prod` | Secret salt for hashing client IPs in usage counters; set a real value |
+| `TRUSTED_PROXY_HOPS` | `1` | Reverse-proxy hops in front of the app (Render = 1). The real client IP is read that many entries from the right of `X-Forwarded-For`, so client-prepended values can't spoof a fresh allowance. |
 
 ## Usage limits & bring-your-own-keys
 
@@ -91,8 +92,13 @@ free tier no matter what.
 - **Daily limits are durable** (Postgres) so they survive restarts; the short *burst*
   limiter is in-memory (harmless to reset). A multi-instance deployment would move the
   burst limiter to Redis.
-- **Best-effort identity.** Without accounts, the per-user allowance can be evaded by
-  clearing cookies or spoofing `X-Forwarded-For`; that's why `DAILY_REQUEST_BUDGET` is the
-  real cost ceiling. Real auth would be the next step for stronger per-user limits.
+- **Best-effort identity.** Client IPs are read from the right of `X-Forwarded-For`
+  (`TRUSTED_PROXY_HOPS`), so prepended values can't spoof a new allowance; but without
+  accounts the allowance can still be evaded (fresh cookies, IP rotation), which is why
+  `DAILY_REQUEST_BUDGET` is the real cost ceiling. Real auth is the next step for stronger
+  per-user limits.
+- **BYO keys are never logged or stored.** They're read from request headers only and
+  passed straight to the provider clients; the app logs no request headers, and configured
+  keys are `SecretStr` (masked in reprs).
 - **Schema changes** need a fresh database or a migration — `create_all` does not alter
   existing tables. Alembic is the intended follow-up.
