@@ -65,6 +65,7 @@ All limits are environment variables you can change in the Render dashboard:
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `LLM_MODEL` | `gemini-2.0-flash` | Gemini model; change if your API key doesn't have this one (a `404 NOT_FOUND` on ask means the model name isn't available to your key) |
 | `SESSION_TTL_HOURS` | `24` | How long uploaded data is retained |
 | `MAX_UPLOAD_BYTES` | `2097152` | Max upload size (2 MiB) |
 | `MAX_SECTIONS_PER_UPLOAD` | `150` | Max chunks per upload |

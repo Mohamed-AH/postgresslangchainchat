@@ -43,7 +43,10 @@ class Settings(BaseSettings):
         default=1024,
         description="Vector dimension of the embedding model (embed-english-v3.0 -> 1024).",
     )
-    llm_model: str = Field(default="gemini-1.5-flash", description="Gemini chat model.")
+    llm_model: str = Field(
+        default="gemini-2.0-flash",
+        description="Gemini chat model (override with LLM_MODEL if your key lacks it).",
+    )
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     retriever_k: int = Field(default=3, ge=1, le=20, description="Documents to retrieve.")
     collection_name: str = Field(
