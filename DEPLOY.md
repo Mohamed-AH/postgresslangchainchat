@@ -70,13 +70,29 @@ All limits are environment variables you can change in the Render dashboard:
 | `RATE_LIMIT_ASKS_PER_MINUTE` | `10` | Per-session ask limit, kept under the free-tier RPM |
 | `MAX_UPLOAD_BYTES` | `2097152` | Max upload size (2 MiB) |
 | `MAX_SECTIONS_PER_UPLOAD` | `150` | Max chunks per upload |
-| `RATE_LIMIT_INGESTS_PER_HOUR` | `20` | Per-session upload limit |
-| `DAILY_REQUEST_BUDGET` | `1000` | Instance-wide daily op cap protecting your keys (0 = off) |
+| `RATE_LIMIT_INGESTS_PER_HOUR` | `20` | Per-session upload burst limit |
+| `DAILY_FREE_ALLOWANCE` | `10` | Free shared-key asks/day **per user** before they're prompted for their own keys (0 = unlimited) |
+| `DAILY_REQUEST_BUDGET` | `1000` | Instance-wide shared-key asks/day — the absolute cost ceiling (0 = off) |
+| `USAGE_HASH_SALT` | `change-me-in-prod` | Secret salt for hashing client IPs in usage counters; set a real value |
+
+## Usage limits & bring-your-own-keys
+
+Each visitor gets `DAILY_FREE_ALLOWANCE` shared-key questions per day (counted per
+salted-hashed IP + cookie, stored durably in Postgres so limits survive restarts). When
+that's used up, the UI prompts for the visitor's **own** Cohere + Gemini keys, which are
+sent per request (headers `X-Cohere-Api-Key` / `X-Google-Api-Key`) and **never stored or
+logged**; BYO requests bypass the shared-key limits. `DAILY_REQUEST_BUDGET` is the
+instance-wide backstop that guarantees total shared-key usage stays within the provider
+free tier no matter what.
 
 ## Caveats (by design, for a free demo)
 
 - **Cold starts** on both Render and Neon after idle — expected; surfaced in the UI.
-- **Rate limits/budget are per-instance** (in-memory). The free tier is a single
-  instance, so this is fine; a multi-instance deployment would back them with Redis.
+- **Daily limits are durable** (Postgres) so they survive restarts; the short *burst*
+  limiter is in-memory (harmless to reset). A multi-instance deployment would move the
+  burst limiter to Redis.
+- **Best-effort identity.** Without accounts, the per-user allowance can be evaded by
+  clearing cookies or spoofing `X-Forwarded-For`; that's why `DAILY_REQUEST_BUDGET` is the
+  real cost ceiling. Real auth would be the next step for stronger per-user limits.
 - **Schema changes** need a fresh database or a migration — `create_all` does not alter
   existing tables. Alembic is the intended follow-up.

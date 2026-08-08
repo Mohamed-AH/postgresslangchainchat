@@ -92,20 +92,50 @@ def test_ask_provider_quota_error_maps_to_429(api_client) -> None:
     assert "quota" in response.json()["detail"].lower()
 
 
-def test_ask_is_rate_limited(api_client) -> None:
-    from ragchat.api.guards import DailyBudget, Guards, RateLimiter
+def _guards(**overrides):
+    from ragchat.api.guards import Guards, RateLimiter
 
-    # Install a strict limiter: one ask allowed, the next is 429.
-    api_client.app.state.guards = Guards(
-        ask_limiter=RateLimiter(1, 60.0),
-        ingest_limiter=RateLimiter(1000, 3600.0),
-        daily_budget=DailyBudget(0),
-    )
+    base = {
+        "ask_limiter": RateLimiter(10_000, 60.0),
+        "ingest_limiter": RateLimiter(10_000, 3600.0),
+        "daily_free_allowance": 0,
+        "daily_budget": 0,
+        "hash_salt": "test-salt",
+    }
+    base.update(overrides)
+    return Guards(**base)
+
+
+def test_ask_is_rate_limited(api_client) -> None:
+    from ragchat.api.guards import RateLimiter
+
+    # Install a strict burst limiter: one ask allowed, the next is 429.
+    api_client.app.state.guards = _guards(ask_limiter=RateLimiter(1, 60.0))
     first = api_client.post("/ask", json={"question": "What is a VPC?"})
     second = api_client.post("/ask", json={"question": "And a subnet?"})
     assert first.status_code == 200
     assert second.status_code == 429
     assert "Retry-After" in second.headers
+
+
+def test_free_allowance_gate_prompts_for_byo_keys(api_client) -> None:
+    # One free ask/day, then the gate should ask the user to bring their own keys.
+    api_client.app.state.guards = _guards(daily_free_allowance=1)
+    first = api_client.post("/ask", json={"question": "one"})
+    second = api_client.post("/ask", json={"question": "two"})
+    assert first.status_code == 200
+    assert first.headers.get("X-Free-Remaining") == "0"
+    assert second.status_code == 429
+    assert second.json()["detail"]["byok_required"] is True
+
+
+def test_byo_keys_bypass_the_free_allowance(api_client) -> None:
+    api_client.app.state.guards = _guards(daily_free_allowance=1)
+    headers = {"X-Cohere-Api-Key": "user-cohere", "X-Google-Api-Key": "user-google"}
+    # Well beyond the free allowance, but BYO keys bypass shared-key limits entirely.
+    for _ in range(3):
+        resp = api_client.post("/ask", json={"question": "q"}, headers=headers)
+        assert resp.status_code == 200
 
 
 def test_index_serves_web_ui(api_client) -> None:

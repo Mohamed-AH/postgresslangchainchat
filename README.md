@@ -96,7 +96,10 @@ ragchat serve                     # start the API
 ## API
 
 Each caller is an isolated **session** (a signed cookie): uploaded content and vectors
-are namespaced per session, so users never see or overwrite each other's data.
+are namespaced per session, so users never see or overwrite each other's data. Each
+visitor gets a small daily free allowance on the shared keys; beyond it they can supply
+their **own** Cohere/Gemini keys via headers (`X-Cohere-Api-Key` / `X-Google-Api-Key`),
+which are used per request and never stored — see [DEPLOY.md](DEPLOY.md#usage-limits--bring-your-own-keys).
 
 | Method | Path            | Description |
 |--------|-----------------|-------------|

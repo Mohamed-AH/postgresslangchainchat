@@ -1,8 +1,8 @@
-"""Tests for the in-memory rate limiter and daily budget."""
+"""Tests for the in-memory burst rate limiter."""
 
 from __future__ import annotations
 
-from ragchat.api.guards import DailyBudget, RateLimiter
+from ragchat.api.guards import RateLimiter
 
 
 def test_rate_limiter_allows_up_to_limit_then_blocks() -> None:
@@ -23,22 +23,3 @@ def test_rate_limiter_keys_are_independent() -> None:
     assert limiter.allow("a", now=0) is True
     assert limiter.allow("b", now=0) is True  # different key, own budget
     assert limiter.allow("a", now=0) is False
-
-
-def test_daily_budget_blocks_past_cap() -> None:
-    budget = DailyBudget(2)
-    assert budget.allow(now=0) is True
-    assert budget.allow(now=0) is True
-    assert budget.allow(now=0) is False
-
-
-def test_daily_budget_resets_next_day() -> None:
-    budget = DailyBudget(1)
-    assert budget.allow(now=0) is True
-    assert budget.allow(now=0) is False
-    assert budget.allow(now=86400) is True  # next UTC day
-
-
-def test_daily_budget_zero_means_unlimited() -> None:
-    budget = DailyBudget(0)
-    assert all(budget.allow(now=0) for _ in range(1000))

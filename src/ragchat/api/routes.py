@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from collections.abc import Callable
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
@@ -19,6 +21,7 @@ from ragchat.api.schemas import (
     IngestResponse,
     SourceSchema,
 )
+from ragchat.db import repository
 from ragchat.errors import (
     EmptyDocumentError,
     FileTooLargeError,
@@ -37,6 +40,10 @@ _SESSION_TTL_SECONDS = 24 * 60 * 60
 # shape we mint (a uuid4 hex). Anything else is replaced with a fresh id.
 _VALID_SESSION_ID = re.compile(r"^[0-9a-f]{32}$")
 
+# Bring-your-own-keys are sent per request in these headers and never stored server-side.
+COHERE_KEY_HEADER = "X-Cohere-Api-Key"
+GOOGLE_KEY_HEADER = "X-Google-Api-Key"
+
 
 def get_session_id(request: Request, response: Response) -> str:
     """Resolve the caller's session id from a cookie, minting one if absent/invalid."""
@@ -53,9 +60,33 @@ def get_session_id(request: Request, response: Response) -> str:
     return sid
 
 
-def get_service(session_id: str = Depends(get_session_id)) -> RAGService:
-    """Build a session-scoped service. Overridden in tests to inject a fake."""
-    return build_session_service(session_id)
+def _byo_keys(request: Request) -> tuple[str | None, str | None]:
+    """Extract bring-your-own Cohere/Google keys from request headers, if both present."""
+    cohere = (request.headers.get(COHERE_KEY_HEADER) or "").strip()
+    google = (request.headers.get(GOOGLE_KEY_HEADER) or "").strip()
+    if cohere and google:
+        return cohere, google
+    return None, None
+
+
+def get_service(request: Request, session_id: str = Depends(get_session_id)) -> RAGService:
+    """Build a session-scoped service, honoring per-request BYO keys if supplied.
+
+    Overridden in tests to inject a fake.
+    """
+    cohere_key, google_key = _byo_keys(request)
+    return build_session_service(session_id, cohere_key=cohere_key, google_key=google_key)
+
+
+def get_db_session_factory() -> Callable[[], DbSession]:
+    """Provide the DB session factory used by the readiness probe and usage metering.
+
+    Kept separate from :func:`get_service` so neither readiness nor metering depends on
+    the model layer. Overridden in tests to point at SQLite.
+    """
+    from ragchat.db.engine import get_session_factory
+
+    return get_session_factory()
 
 
 def _get_guards(request: Request) -> Guards:
@@ -69,12 +100,26 @@ def _get_guards(request: Request) -> Guards:
     return guards
 
 
-def _too_many(retry_after: int, detail: str) -> HTTPException:
+def _too_many(retry_after: int, detail: object) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         detail=detail,
         headers={"Retry-After": str(retry_after)},
     )
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP, honoring the proxy's X-Forwarded-For (leftmost hop)."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _ip_scope(request: Request, salt: str) -> str:
+    """A privacy-preserving, salted hash of the client IP for usage counting."""
+    digest = hashlib.sha256(f"{salt}:{_client_ip(request)}".encode()).hexdigest()[:32]
+    return f"ip:{digest}"
 
 
 def _is_provider_quota_error(message: str) -> bool:
@@ -99,33 +144,64 @@ def _map_provider_error(exc: Exception, action: str) -> HTTPException:
     )
 
 
-def rate_limit_ask(request: Request, session_id: str = Depends(get_session_id)) -> None:
-    """Enforce the per-session ask rate limit and the global daily budget."""
+def guard_ask(
+    request: Request,
+    response: Response,
+    session_id: str = Depends(get_session_id),
+    session_factory: Callable[[], DbSession] = Depends(get_db_session_factory),
+) -> None:
+    """Guard the ask endpoint: burst limit + durable daily allowance/budget.
+
+    Bring-your-own-keys requests bypass every shared-key limit (they spend their own
+    quota). Otherwise: a per-session burst limit, then a per-user daily free allowance
+    (hashed-IP), then the instance-wide daily budget — all enforced against durable DB
+    counters so limits survive restarts. Exhausting the allowance returns a 429 flagged
+    ``byok_required`` so the UI can prompt for the user's own keys.
+    """
+    if _byo_keys(request) != (None, None):
+        return
+
     guards = _get_guards(request)
     if not guards.ask_limiter.allow(session_id):
         raise _too_many(60, "Too many questions; slow down and try again shortly.")
-    if not guards.daily_budget.allow():
-        raise _too_many(3600, "The demo's daily request budget is exhausted. Try later.")
+
+    day = datetime.now(UTC).strftime("%Y-%m-%d")
+    with session_factory() as db:
+        remaining = -1
+        if guards.daily_free_allowance > 0:
+            ip_count = repository.bump_usage(db, _ip_scope(request, guards.hash_salt), day)
+            if ip_count > guards.daily_free_allowance:
+                db.rollback()
+                raise _too_many(
+                    3600,
+                    {
+                        "message": "You've used your free questions for today. Add your own "
+                        "Cohere and Gemini API keys to keep going.",
+                        "byok_required": True,
+                    },
+                )
+            remaining = guards.daily_free_allowance - ip_count
+        if guards.daily_budget > 0:
+            total = repository.bump_usage(db, "global", day)
+            if total > guards.daily_budget:
+                db.rollback()
+                raise _too_many(
+                    3600,
+                    "The demo's daily request budget is exhausted. Please try again "
+                    "tomorrow, or add your own API keys.",
+                )
+        db.commit()
+    if remaining >= 0:
+        response.headers["X-Free-Remaining"] = str(remaining)
 
 
-def rate_limit_ingest(request: Request, session_id: str = Depends(get_session_id)) -> None:
-    """Enforce the per-session upload rate limit and the global daily budget."""
+def guard_ingest(request: Request, session_id: str = Depends(get_session_id)) -> None:
+    """Guard uploads with a per-session burst limit (BYO-key requests bypass it)."""
+    if _byo_keys(request) != (None, None):
+        return
     guards = _get_guards(request)
     if not guards.ingest_limiter.allow(session_id):
         raise _too_many(3600, "Too many uploads; try again later.")
-    if not guards.daily_budget.allow():
-        raise _too_many(3600, "The demo's daily request budget is exhausted. Try later.")
-
-
-def get_db_session_factory() -> Callable[[], DbSession]:
-    """Provide the DB session factory for the readiness probe (no LLM providers).
-
-    Kept separate from :func:`get_service` so readiness never depends on the model layer.
-    Overridden in tests.
-    """
-    from ragchat.db.engine import get_session_factory
-
-    return get_session_factory()
 
 
 @router.get("/health", response_model=HealthResponse, tags=["ops"])
@@ -156,7 +232,7 @@ def health(
     "/ask",
     response_model=AskResponse,
     tags=["qa"],
-    dependencies=[Depends(rate_limit_ask)],
+    dependencies=[Depends(guard_ask)],
 )
 def ask(payload: AskRequest, service: RAGService = Depends(get_service)) -> AskResponse:
     """Answer a question using retrieval-augmented generation over the caller's session."""
@@ -180,7 +256,7 @@ def ask(payload: AskRequest, service: RAGService = Depends(get_service)) -> AskR
     "/ingest/file",
     response_model=IngestResponse,
     tags=["ingest"],
-    dependencies=[Depends(rate_limit_ingest)],
+    dependencies=[Depends(guard_ingest)],
 )
 async def ingest_file(
     file: UploadFile = File(...),

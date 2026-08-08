@@ -238,18 +238,14 @@ def _get_providers() -> _Providers:
     safely shared; only the vector collection and relational scoping vary by session.
     """
     from ragchat.rag.embeddings import build_embeddings
+    from ragchat.rag.llm import build_llm
 
     settings = get_settings()
-    embeddings = build_embeddings(settings)
-
-    from langchain_google_genai import ChatGoogleGenerativeAI
-
-    llm = ChatGoogleGenerativeAI(
-        model=settings.llm_model,
-        google_api_key=settings.google_api_key.get_secret_value(),
-        temperature=settings.llm_temperature,
+    return _Providers(
+        settings=settings,
+        embeddings=build_embeddings(settings),
+        llm=build_llm(settings),
     )
-    return _Providers(settings=settings, embeddings=embeddings, llm=llm)
 
 
 def purge_expired_sessions() -> int:
@@ -268,6 +264,15 @@ def purge_expired_sessions() -> int:
     init_db()
     settings = get_settings()
     session_factory = get_session_factory()
+
+    # Drop stale daily usage counters (keep only today's).
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
+    with session_factory() as db:
+        removed = repository.delete_usage_before(db, today)
+        db.commit()
+    if removed:
+        logger.info("Deleted %d stale usage counters", removed)
+
     with session_factory() as db:
         expired = repository.expired_session_ids(db, datetime.now(UTC))
 
@@ -294,32 +299,51 @@ def purge_expired_sessions() -> int:
     return len(expired)
 
 
-def build_session_service(session_id: str) -> RAGService:
-    """Wire a fully configured, session-scoped :class:`RAGService`."""
+def build_session_service(
+    session_id: str,
+    *,
+    cohere_key: str | None = None,
+    google_key: str | None = None,
+) -> RAGService:
+    """Wire a fully configured, session-scoped :class:`RAGService`.
+
+    When both ``cohere_key`` and ``google_key`` are given (bring-your-own-keys), providers
+    are built per-request from those keys instead of the cached shared ones; the keys are
+    used only to construct the clients and are never persisted or logged.
+    """
     from ragchat.db.engine import get_session_factory, init_db
     from ragchat.rag.pipeline import build_rag_chain
     from ragchat.rag.vectorstore import build_vector_store, session_collection_name
 
     init_db()  # ensure the relational schema exists (idempotent)
-    providers = _get_providers()
+    settings = get_settings()
+
+    if cohere_key and google_key:
+        from ragchat.rag.embeddings import build_embeddings
+        from ragchat.rag.llm import build_llm
+
+        embeddings = build_embeddings(settings, cohere_key=cohere_key)
+        llm = build_llm(settings, google_key=google_key)
+    else:
+        providers = _get_providers()
+        embeddings, llm = providers.embeddings, providers.llm
+
     vector_store = build_vector_store(
-        providers.embeddings,
-        providers.settings,
-        collection_name=session_collection_name(session_id),
+        embeddings, settings, collection_name=session_collection_name(session_id)
     )
-    retriever = vector_store.as_retriever(search_kwargs={"k": providers.settings.retriever_k})
-    chain = build_rag_chain(retriever, providers.llm)
+    retriever = vector_store.as_retriever(search_kwargs={"k": settings.retriever_k})
+    chain = build_rag_chain(retriever, llm)
 
     return RAGService(
         session_id=session_id,
         session_factory=get_session_factory(),
         vector_store=vector_store,
         chain=chain,
-        ttl_hours=providers.settings.session_ttl_hours,
+        ttl_hours=settings.session_ttl_hours,
         limits=IngestLimits(
-            max_upload_bytes=providers.settings.max_upload_bytes,
-            max_sections=providers.settings.max_sections_per_upload,
-            chunk_max_chars=providers.settings.chunk_max_chars,
-            chunk_overlap=providers.settings.chunk_overlap_chars,
+            max_upload_bytes=settings.max_upload_bytes,
+            max_sections=settings.max_sections_per_upload,
+            chunk_max_chars=settings.chunk_max_chars,
+            chunk_overlap=settings.chunk_overlap_chars,
         ),
     )

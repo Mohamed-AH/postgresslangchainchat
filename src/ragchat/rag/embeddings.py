@@ -14,9 +14,16 @@ from langchain_core.embeddings import Embeddings
 from ragchat.config import Settings, get_settings
 
 
-def build_embeddings(settings: Settings | None = None) -> Embeddings:
-    """Construct the Cohere embedding model from settings."""
+def build_embeddings(
+    settings: Settings | None = None, *, cohere_key: str | None = None
+) -> Embeddings:
+    """Construct the Cohere embedding model.
+
+    ``cohere_key`` overrides the configured shared key (used for bring-your-own-keys
+    requests); it is never persisted or logged.
+    """
     settings = settings or get_settings()
+    key = cohere_key or settings.cohere_api_key.get_secret_value()
     # Imported lazily so importing this module (e.g. in unit tests) never requires the
     # optional provider SDK to be installed or configured.
     from langchain_cohere import CohereEmbeddings
@@ -28,8 +35,5 @@ def build_embeddings(settings: Settings | None = None) -> Embeddings:
     embeddings_cls: Any = CohereEmbeddings
     return cast(
         Embeddings,
-        embeddings_cls(
-            cohere_api_key=settings.cohere_api_key.get_secret_value(),
-            model=settings.embedding_model,
-        ),
+        embeddings_cls(cohere_api_key=key, model=settings.embedding_model),
     )
