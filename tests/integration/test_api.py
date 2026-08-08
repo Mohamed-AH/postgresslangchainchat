@@ -33,11 +33,17 @@ def test_health_reports_ok_when_db_reachable(api_client) -> None:
     assert response.json() == {"status": "ok"}
 
 
-def test_health_returns_503_when_db_unreachable(api_client, rag_service, monkeypatch) -> None:
-    def _boom() -> bool:
-        raise RuntimeError("db down")
+def test_health_returns_503_when_db_unreachable(api_client) -> None:
+    from ragchat.api.routes import get_db_session_factory
 
-    monkeypatch.setattr(rag_service, "health_check", _boom)
+    def _broken_factory():
+        def _session():
+            raise RuntimeError("db down")
+
+        return _session
+
+    # Point the readiness probe at a factory whose sessions fail.
+    api_client.app.dependency_overrides[get_db_session_factory] = _broken_factory
     response = api_client.get("/health")
     assert response.status_code == 503
 

@@ -1,38 +1,82 @@
-"""Data-access helpers for the ``knowledge_base`` table.
+"""Data-access helpers, all scoped by ``session_id`` for tenant isolation.
 
 Keeps SQLAlchemy usage in one place so the service layer works with plain domain
-objects (``Section``) rather than ORM/session details.
+objects (``Section``) and never issues an unscoped query — the single most important
+invariant for multi-tenancy is that one session can neither read nor delete another's rows.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy import delete, func, select
+from sqlalchemy.orm import Session as DbSession
 
-from ragchat.db.models import KnowledgeBase
+from ragchat.db.models import KnowledgeBase, Session
 from ragchat.ingestion.parser import Section
 
+# --- Sessions -------------------------------------------------------------
 
-def replace_all_sections(session: Session, sections: Sequence[Section]) -> int:
-    """Replace the entire corpus with ``sections`` within the caller's transaction.
 
-    The delete + insert run in a single transaction (the caller controls commit/rollback),
-    so a failure mid-ingest never leaves the table half-populated.
+def upsert_session(db: DbSession, session_id: str, expires_at: datetime) -> None:
+    """Create the session row if absent, or refresh its expiry if present."""
+    existing = db.get(Session, session_id)
+    if existing is None:
+        db.add(Session(id=session_id, expires_at=expires_at))
+    else:
+        existing.expires_at = expires_at
+    db.flush()
+
+
+def delete_session(db: DbSession, session_id: str) -> None:
+    """Delete a session and (via cascade) all of its sections."""
+    obj = db.get(Session, session_id)
+    if obj is not None:
+        db.delete(obj)
+        db.flush()
+
+
+def expired_session_ids(db: DbSession, now: datetime) -> list[str]:
+    """Return ids of sessions whose retention window has elapsed."""
+    stmt = select(Session.id).where(Session.expires_at < now)
+    return list(db.execute(stmt).scalars().all())
+
+
+# --- Sections (always scoped by session) ----------------------------------
+
+
+def replace_all_sections(db: DbSession, session_id: str, sections: Sequence[Section]) -> int:
+    """Replace *this session's* corpus with ``sections`` within the caller's transaction.
+
+    Only rows belonging to ``session_id`` are deleted, so re-ingesting for one session
+    never touches another's data. Runs in the caller's transaction (commit/rollback is
+    theirs), so a mid-ingest failure never leaves the table half-populated.
     """
-    session.query(KnowledgeBase).delete()
-    session.add_all([KnowledgeBase(title=s.title, content=s.content) for s in sections])
-    session.flush()
+    db.execute(delete(KnowledgeBase).where(KnowledgeBase.session_id == session_id))
+    db.add_all(
+        [KnowledgeBase(session_id=session_id, title=s.title, content=s.content) for s in sections]
+    )
+    db.flush()
     return len(sections)
 
 
-def count_sections(session: Session) -> int:
-    """Return the number of rows in ``knowledge_base``."""
-    return session.execute(select(func.count()).select_from(KnowledgeBase)).scalar_one()
+def count_sections(db: DbSession, session_id: str) -> int:
+    """Return the number of rows owned by ``session_id``."""
+    stmt = (
+        select(func.count())
+        .select_from(KnowledgeBase)
+        .where(KnowledgeBase.session_id == session_id)
+    )
+    return db.execute(stmt).scalar_one()
 
 
-def get_all_sections(session: Session) -> list[Section]:
-    """Return every stored section as domain objects."""
-    rows = session.execute(select(KnowledgeBase).order_by(KnowledgeBase.id)).scalars().all()
+def get_all_sections(db: DbSession, session_id: str) -> list[Section]:
+    """Return every section owned by ``session_id`` as domain objects."""
+    stmt = (
+        select(KnowledgeBase)
+        .where(KnowledgeBase.session_id == session_id)
+        .order_by(KnowledgeBase.id)
+    )
+    rows = db.execute(stmt).scalars().all()
     return [Section(title=row.title, content=row.content) for row in rows]

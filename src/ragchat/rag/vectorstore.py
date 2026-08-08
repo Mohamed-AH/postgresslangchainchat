@@ -34,15 +34,23 @@ def validate_embedding_dimension(settings: Settings) -> None:
         )
 
 
+def session_collection_name(session_id: str) -> str:
+    """Return the pgvector collection name for a session (one collection per tenant)."""
+    return f"kb_{session_id}"
+
+
 def build_vector_store(
     embeddings: Embeddings,
     settings: Settings | None = None,
+    collection_name: str | None = None,
 ) -> Any:
-    """Construct a ``PGVector`` store bound to the configured collection.
+    """Construct a ``PGVector`` store bound to ``collection_name``.
 
     Returns ``Any`` because ``PGVector`` is imported lazily (its SDK is optional at
     import time); callers treat it as a LangChain vector store.
 
+    Passing a per-session ``collection_name`` isolates one tenant's vectors from another's
+    (see :func:`session_collection_name`); it defaults to ``settings.collection_name``.
     The collection's vector column dimension is fixed to ``settings.embedding_dimension``,
     so switching embedding models without also updating the dimension is caught up front.
     """
@@ -53,7 +61,7 @@ def build_vector_store(
 
     return PGVector(
         embeddings=embeddings,
-        collection_name=settings.collection_name,
+        collection_name=collection_name or settings.collection_name,
         connection=settings.sqlalchemy_url,
         embedding_length=settings.embedding_dimension,
         use_jsonb=True,

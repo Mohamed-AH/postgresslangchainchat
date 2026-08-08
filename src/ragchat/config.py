@@ -48,7 +48,14 @@ class Settings(BaseSettings):
     retriever_k: int = Field(default=3, ge=1, le=20, description="Documents to retrieve.")
     collection_name: str = Field(
         default="qa_knowledge_base",
-        description="Name of the pgvector collection holding embeddings.",
+        description="Default pgvector collection (used by the CLI 'default' session).",
+    )
+
+    # --- Multi-tenancy / lifecycle ----------------------------------------
+    session_ttl_hours: int = Field(
+        default=24,
+        ge=1,
+        description="Hours a hosted session's uploaded data is retained before cleanup.",
     )
 
     # --- Observability -----------------------------------------------------

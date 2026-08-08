@@ -3,7 +3,7 @@
 The whole suite runs with **no API keys and no live database**:
 
 * the relational layer is exercised against real SQLite in-memory (so models and the
-  repository are genuinely tested), and
+  repository are genuinely tested, including per-session scoping and cascade delete), and
 * embeddings / LLM / pgvector are replaced with deterministic fakes.
 """
 
@@ -17,7 +17,7 @@ from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.retrievers import BaseRetriever
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from ragchat.db.models import Base
@@ -65,8 +65,15 @@ class FakeVectorStore:
 
 @pytest.fixture
 def session_factory() -> Callable[[], Session]:
-    """A real SQLite in-memory session factory (shared connection)."""
+    """A real SQLite in-memory session factory with FK cascade enabled."""
     engine = create_engine("sqlite://", future=True)
+
+    @event.listens_for(engine, "connect")
+    def _enable_fk(dbapi_conn, _record) -> None:  # type: ignore[no-untyped-def]
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA foreign_keys=ON")
+        cur.close()
+
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine, expire_on_commit=False, future=True)
 
@@ -91,31 +98,56 @@ def fake_vector_store() -> FakeVectorStore:
 
 
 @pytest.fixture
-def rag_service(
+def make_service(
     session_factory: Callable[[], Session],
-    fake_vector_store: FakeVectorStore,
-    sample_documents: list[Document],
-) -> RAGService:
-    """A service wired with SQLite + fake vector store + a real LCEL chain over fakes."""
-    retriever = FakeRetriever(documents=sample_documents)
-    llm = FakeListChatModel(responses=["A VPC is a private, isolated network in the cloud."])
-    chain = build_rag_chain(retriever, llm)
-    return RAGService(
-        session_factory=session_factory,
-        vector_store=fake_vector_store,
-        chain=chain,
-    )
+) -> Callable[..., RAGService]:
+    """Factory building a session-scoped service backed by SQLite + fakes.
+
+    Sessions built from the same fixture share one SQLite database, which is exactly
+    what the isolation tests need: two tenants, one datastore, no cross-contamination.
+    """
+
+    def _make(
+        session_id: str,
+        *,
+        vector_store: FakeVectorStore | None = None,
+        documents: list[Document] | None = None,
+        answer: str = "A VPC is a private, isolated network in the cloud.",
+    ) -> RAGService:
+        retriever = FakeRetriever(documents=documents or [])
+        chain = build_rag_chain(retriever, FakeListChatModel(responses=[answer]))
+        return RAGService(
+            session_id=session_id,
+            session_factory=session_factory,
+            vector_store=vector_store or FakeVectorStore(),
+            chain=chain,
+            ttl_hours=24,
+        )
+
+    return _make
 
 
 @pytest.fixture
-def api_client(rag_service: RAGService) -> Iterator[TestClient]:
-    """A FastAPI TestClient with the service dependency overridden by ``rag_service``."""
+def rag_service(
+    make_service: Callable[..., RAGService],
+    fake_vector_store: FakeVectorStore,
+    sample_documents: list[Document],
+) -> RAGService:
+    """A single session-scoped service wired with SQLite + fakes."""
+    return make_service("session_a", vector_store=fake_vector_store, documents=sample_documents)
+
+
+@pytest.fixture
+def api_client(
+    rag_service: RAGService, session_factory: Callable[[], Session]
+) -> Iterator[TestClient]:
+    """A FastAPI TestClient with the service + DB dependencies overridden by fakes."""
     from ragchat.api.app import create_app
-    from ragchat.api.routes import get_service
+    from ragchat.api.routes import get_db_session_factory, get_service
 
     app = create_app()
     app.dependency_overrides[get_service] = lambda: rag_service
+    app.dependency_overrides[get_db_session_factory] = lambda: session_factory
     # Construct the client WITHOUT the `with` block: entering it would run the real
-    # lifespan (building production services that need API keys). The overridden
-    # dependency supplies the fake service, so startup isn't needed.
+    # lifespan (which needs a real database). The overridden dependencies suffice.
     yield TestClient(app)

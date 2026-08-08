@@ -17,6 +17,9 @@ app = typer.Typer(
     help="Retrieval-augmented Q&A over a PostgreSQL + pgvector knowledge base.",
 )
 
+# The CLI is a single-tenant admin tool; it operates on one fixed session.
+_CLI_SESSION_ID = "default"
+
 
 @app.command()
 def ingest(
@@ -24,9 +27,9 @@ def ingest(
 ) -> None:
     """Parse a markdown file and (re)build the knowledge base and vector index."""
     configure_logging(get_settings().log_level)
-    from ragchat.service import build_service
+    from ragchat.service import build_session_service
 
-    service = build_service()
+    service = build_session_service(_CLI_SESSION_ID)
     result = service.ingest_markdown_file(path)
     typer.secho(
         f"Ingested {result.sections_written} sections from {path}.",
@@ -41,9 +44,9 @@ def ask(
 ) -> None:
     """Ask a single question and print the answer (and optionally its sources)."""
     configure_logging(get_settings().log_level)
-    from ragchat.service import build_service
+    from ragchat.service import build_session_service
 
-    service = build_service()
+    service = build_session_service(_CLI_SESSION_ID)
     result = service.ask(question)
 
     typer.secho("\nAnswer:", fg=typer.colors.CYAN, bold=True)

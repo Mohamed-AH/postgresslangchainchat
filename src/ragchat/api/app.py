@@ -26,12 +26,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger = get_logger(__name__)
 
     # Import here so the module imports cleanly even when providers aren't configured
-    # (e.g. when tests import create_app and override the service dependency).
-    from ragchat.db.engine import get_engine
-    from ragchat.service import build_service
+    # (e.g. when tests import create_app and override dependencies).
+    from ragchat.db.engine import get_engine, init_db
 
     logger.info("Starting ragchat API v%s", __version__)
-    app.state.service = build_service()
+    # Ensure the relational schema exists up front. Per-session services (and their LLM
+    # providers) are built lazily on first request, so startup stays fast and the
+    # readiness probe never depends on the model layer.
+    init_db()
     try:
         yield
     finally:
