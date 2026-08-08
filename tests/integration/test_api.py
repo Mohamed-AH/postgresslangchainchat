@@ -70,12 +70,26 @@ def test_ask_provider_error_returns_clean_json_502(api_client) -> None:
 
     class _BoomService:
         def ask(self, question: str):
-            raise RuntimeError("Error calling model 'x' (NOT_FOUND): 404")
+            raise RuntimeError("Error calling model 'x' (NOT_FOUND): model not found")
 
     api_client.app.dependency_overrides[get_service] = lambda: _BoomService()
     response = api_client.post("/ask", json={"question": "hi"})
     assert response.status_code == 502
     assert "model request failed" in response.json()["detail"]
+
+
+def test_ask_provider_quota_error_maps_to_429(api_client) -> None:
+    from ragchat.api.routes import get_service
+
+    class _QuotaService:
+        def ask(self, question: str):
+            raise RuntimeError("429 RESOURCE_EXHAUSTED: You exceeded your current quota")
+
+    api_client.app.dependency_overrides[get_service] = lambda: _QuotaService()
+    response = api_client.post("/ask", json={"question": "hi"})
+    assert response.status_code == 429
+    assert "Retry-After" in response.headers
+    assert "quota" in response.json()["detail"].lower()
 
 
 def test_ask_is_rate_limited(api_client) -> None:

@@ -77,6 +77,28 @@ def _too_many(retry_after: int, detail: str) -> HTTPException:
     )
 
 
+def _is_provider_quota_error(message: str) -> bool:
+    """Heuristic: does a provider exception indicate an upstream rate/quota limit?"""
+    upper = message.upper()
+    return "RESOURCE_EXHAUSTED" in upper or "429" in upper or "QUOTA" in upper
+
+
+def _map_provider_error(exc: Exception, action: str) -> HTTPException:
+    """Turn a provider failure into a clean HTTP error the UI can display."""
+    message = str(exc)
+    logger.exception("%s failed for session", action)
+    if _is_provider_quota_error(message):
+        return _too_many(
+            60,
+            "The shared model quota is exhausted right now — please try again shortly. "
+            "(This demo runs on a limited free-tier key.)",
+        )
+    return HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail=f"The model request failed: {message}"[:400],
+    )
+
+
 def rate_limit_ask(request: Request, session_id: str = Depends(get_session_id)) -> None:
     """Enforce the per-session ask rate limit and the global daily budget."""
     guards = _get_guards(request)
@@ -145,13 +167,9 @@ def ask(payload: AskRequest, service: RAGService = Depends(get_service)) -> AskR
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
     except Exception as exc:
-        # Provider/model failures (e.g. an unavailable model) must surface as clean JSON,
-        # not a raw 500, so the UI can show what actually went wrong.
-        logger.exception("ask failed for session")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"The model request failed: {exc}"[:400],
-        ) from exc
+        # Provider/model failures must surface as clean JSON (not a raw 500): quota/rate
+        # limits become a friendly 429, everything else a 502 with the real message.
+        raise _map_provider_error(exc, "ask") from exc
     return AskResponse(
         answer=result.answer,
         sources=[SourceSchema(content=s.content, metadata=s.metadata) for s in result.sources],
@@ -195,10 +213,6 @@ async def ingest_file(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
     except Exception as exc:
-        # Embedding/provider failures return clean JSON rather than a raw 500.
-        logger.exception("ingest failed for session")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Ingestion failed: {exc}"[:400],
-        ) from exc
+        # Embedding/provider failures return clean JSON (429 for quota, else 502).
+        raise _map_provider_error(exc, "ingest") from exc
     return IngestResponse(sections_written=result.sections_written)
