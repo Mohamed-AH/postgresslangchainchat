@@ -48,7 +48,46 @@ class Settings(BaseSettings):
     retriever_k: int = Field(default=3, ge=1, le=20, description="Documents to retrieve.")
     collection_name: str = Field(
         default="qa_knowledge_base",
-        description="Name of the pgvector collection holding embeddings.",
+        description="Default pgvector collection (used by the CLI 'default' session).",
+    )
+
+    # --- Multi-tenancy / lifecycle ----------------------------------------
+    session_ttl_hours: int = Field(
+        default=24,
+        ge=1,
+        description="Hours a hosted session's uploaded data is retained before cleanup.",
+    )
+
+    # --- Upload limits (guardrails; env-tunable without a redeploy) --------
+    max_upload_bytes: int = Field(
+        default=2 * 1024 * 1024,
+        ge=1024,
+        description="Maximum accepted upload size in bytes (default 2 MiB).",
+    )
+    max_sections_per_upload: int = Field(
+        default=150,
+        ge=1,
+        description="Maximum sections/chunks a single upload may produce.",
+    )
+    chunk_max_chars: int = Field(
+        default=1200, ge=100, description="Target chunk size for non-markdown documents."
+    )
+    chunk_overlap_chars: int = Field(
+        default=150, ge=0, description="Overlap between adjacent chunks."
+    )
+
+    # --- Rate limiting & cost control (in-memory; per instance) ------------
+    rate_limit_asks_per_minute: int = Field(
+        default=30, ge=1, description="Max /ask calls per session per minute."
+    )
+    rate_limit_ingests_per_hour: int = Field(
+        default=20, ge=1, description="Max uploads per session per hour."
+    )
+    daily_request_budget: int = Field(
+        default=1000,
+        ge=0,
+        description="Max ask+ingest ops/day across the instance (0 = unlimited). "
+        "Protects the shared provider keys from abuse.",
     )
 
     # --- Observability -----------------------------------------------------

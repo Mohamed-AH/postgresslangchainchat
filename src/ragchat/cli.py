@@ -17,17 +17,23 @@ app = typer.Typer(
     help="Retrieval-augmented Q&A over a PostgreSQL + pgvector knowledge base.",
 )
 
+# The CLI is a single-tenant admin tool; it operates on one fixed session.
+_CLI_SESSION_ID = "default"
+
 
 @app.command()
 def ingest(
-    path: str = typer.Argument("content.md", help="Path to the markdown file to ingest."),
+    path: str = typer.Argument("content.md", help="File to ingest (.md/.txt/.pdf/.docx)."),
 ) -> None:
-    """Parse a markdown file and (re)build the knowledge base and vector index."""
+    """Ingest a file and (re)build the knowledge base and vector index."""
     configure_logging(get_settings().log_level)
-    from ragchat.service import build_service
+    from pathlib import Path
 
-    service = build_service()
-    result = service.ingest_markdown_file(path)
+    from ragchat.service import build_session_service
+
+    file_path = Path(path)
+    service = build_session_service(_CLI_SESSION_ID)
+    result = service.ingest_upload(file_path.name, file_path.read_bytes())
     typer.secho(
         f"Ingested {result.sections_written} sections from {path}.",
         fg=typer.colors.GREEN,
@@ -41,9 +47,9 @@ def ask(
 ) -> None:
     """Ask a single question and print the answer (and optionally its sources)."""
     configure_logging(get_settings().log_level)
-    from ragchat.service import build_service
+    from ragchat.service import build_session_service
 
-    service = build_service()
+    service = build_session_service(_CLI_SESSION_ID)
     result = service.ask(question)
 
     typer.secho("\nAnswer:", fg=typer.colors.CYAN, bold=True)
@@ -53,6 +59,16 @@ def ask(
         typer.secho("\nSources:", fg=typer.colors.CYAN, bold=True)
         for source in result.sources:
             typer.echo(f"- {source.content[:200]}...")
+
+
+@app.command()
+def cleanup() -> None:
+    """Purge sessions whose retention window has elapsed (run on a schedule)."""
+    configure_logging(get_settings().log_level)
+    from ragchat.service import purge_expired_sessions
+
+    purged = purge_expired_sessions()
+    typer.secho(f"Purged {purged} expired sessions.", fg=typer.colors.GREEN)
 
 
 @app.command()

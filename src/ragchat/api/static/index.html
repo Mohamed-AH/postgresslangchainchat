@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ragchat — ask your documents</title>
+  <style>
+    :root {
+      --bg: #f7f8fa; --panel: #ffffff; --ink: #1a1d24; --muted: #5b6472;
+      --line: #e4e7ec; --accent: #3b5bdb; --accent-ink: #ffffff;
+      --ok: #157347; --err: #c0392b; --chip: #eef1f7;
+      --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.1);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0f1115; --panel: #171a21; --ink: #e7eaf0; --muted: #9aa4b2;
+        --line: #262b34; --accent: #5b7cfa; --accent-ink: #0b0d11;
+        --ok: #4ade80; --err: #f87171; --chip: #1e232c;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 32px 20px 80px; }
+    header h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: -.02em; }
+    header p { margin: 0 0 24px; color: var(--muted); }
+    .card {
+      background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+      padding: 20px; margin-bottom: 18px; box-shadow: var(--shadow);
+    }
+    .card h2 { margin: 0 0 12px; font-size: 15px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+    .step { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
+      border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-size: 12px; font-weight: 700; margin-right: 8px; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; }
+    input[type=file] { flex: 1 1 260px; min-width: 0; padding: 10px; border: 1px dashed var(--line);
+      border-radius: 10px; background: transparent; color: var(--ink); }
+    textarea {
+      width: 100%; min-height: 74px; resize: vertical; padding: 12px 14px; border-radius: 10px;
+      border: 1px solid var(--line); background: transparent; color: var(--ink); font: inherit;
+    }
+    button {
+      appearance: none; border: 0; border-radius: 10px; background: var(--accent); color: var(--accent-ink);
+      font: 600 14px/1 inherit; padding: 12px 18px; cursor: pointer; transition: opacity .15s, transform .05s;
+    }
+    button:hover { opacity: .92; } button:active { transform: translateY(1px); }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .hint { color: var(--muted); font-size: 13px; margin-top: 10px; }
+    .status { margin-top: 12px; font-size: 14px; min-height: 20px; }
+    .status.ok { color: var(--ok); } .status.err { color: var(--err); }
+    .answer { white-space: pre-wrap; margin: 6px 0 0; }
+    .sources { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+    details { margin-bottom: 8px; }
+    summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+    .src-body { color: var(--muted); font-size: 13.5px; margin-top: 6px; }
+    .banner { display: none; background: #fff4e5; color: #7a4f01; border: 1px solid #f4d9a8;
+      padding: 10px 14px; border-radius: 10px; margin-bottom: 16px; font-size: 14px; }
+    @media (prefers-color-scheme: dark) { .banner { background: #2a2213; color: #f5c451; border-color: #4a3a12; } }
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid currentColor;
+      border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: -2px; margin-right: 6px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    footer { color: var(--muted); font-size: 12.5px; text-align: center; margin-top: 28px; }
+    footer code { background: var(--chip); padding: 1px 6px; border-radius: 6px; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>ragchat</h1>
+      <p>Upload a document, then ask questions answered only from its contents — with sources.</p>
+    </header>
+
+    <div id="banner" class="banner"></div>
+
+    <section class="card">
+      <h2><span class="step">1</span>Add a source</h2>
+      <div class="row">
+        <input id="file" type="file" accept=".md,.markdown,.txt,.text,.pdf,.docx" />
+        <button id="ingestBtn">Ingest</button>
+      </div>
+      <div class="hint">Supported: .md, .txt, .pdf, .docx. Your data is private to your session and auto-expires.</div>
+      <div id="ingestStatus" class="status"></div>
+    </section>
+
+    <section class="card">
+      <h2><span class="step">2</span>Ask a question</h2>
+      <textarea id="question" placeholder="e.g. What is a VPC?"></textarea>
+      <div class="row" style="margin-top:10px;">
+        <button id="askBtn" disabled>Ask</button>
+      </div>
+      <div id="askStatus" class="status"></div>
+      <div id="result" style="display:none;">
+        <p class="answer" id="answer"></p>
+        <div class="sources" id="sources"></div>
+      </div>
+    </section>
+
+    <footer>
+      Built on FastAPI · PostgreSQL + pgvector · LangChain · Cohere · Gemini.
+      API docs at <code><a href="/docs">/docs</a></code>.
+    </footer>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const fileEl = $("file"), ingestBtn = $("ingestBtn"), ingestStatus = $("ingestStatus");
+    const questionEl = $("question"), askBtn = $("askBtn"), askStatus = $("askStatus");
+    const resultEl = $("result"), answerEl = $("answer"), sourcesEl = $("sources"), banner = $("banner");
+    let hasCorpus = false;
+
+    function setStatus(el, msg, kind) { el.className = "status" + (kind ? " " + kind : ""); el.innerHTML = msg; }
+    function spinner(text) { return '<span class="spinner"></span>' + text; }
+
+    async function checkReadiness() {
+      try {
+        const r = await fetch("/health");
+        if (!r.ok) throw new Error();
+        banner.style.display = "none";
+      } catch {
+        banner.textContent = "Waking the service up… (free hosting sleeps when idle). Retrying…";
+        banner.style.display = "block";
+        setTimeout(checkReadiness, 3000);
+      }
+    }
+
+    ingestBtn.addEventListener("click", async () => {
+      const file = fileEl.files[0];
+      if (!file) { setStatus(ingestStatus, "Choose a file first.", "err"); return; }
+      ingestBtn.disabled = true;
+      setStatus(ingestStatus, spinner("Ingesting & embedding “" + file.name + "”…"));
+      try {
+        const form = new FormData(); form.append("file", file);
+        const r = await fetch("/ingest/file", { method: "POST", body: form });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || ("Error " + r.status));
+        hasCorpus = true; askBtn.disabled = false;
+        setStatus(ingestStatus, "✓ Ingested " + data.sections_written + " sections. Ask away below.", "ok");
+      } catch (e) {
+        setStatus(ingestStatus, "✕ " + e.message, "err");
+      } finally { ingestBtn.disabled = false; }
+    });
+
+    askBtn.addEventListener("click", async () => {
+      const q = questionEl.value.trim();
+      if (!q) { setStatus(askStatus, "Type a question first.", "err"); return; }
+      askBtn.disabled = true; resultEl.style.display = "none";
+      setStatus(askStatus, spinner("Thinking…"));
+      try {
+        const r = await fetch("/ask", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ question: q }),
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || ("Error " + r.status));
+        setStatus(askStatus, "");
+        answerEl.textContent = data.answer;
+        sourcesEl.innerHTML = "<strong>Sources (" + data.sources.length + ")</strong>";
+        data.sources.forEach((s, i) => {
+          const d = document.createElement("details");
+          const title = (s.metadata && s.metadata.title) ? s.metadata.title : ("Source " + (i + 1));
+          d.innerHTML = "<summary>" + title + "</summary><div class='src-body'></div>";
+          d.querySelector(".src-body").textContent = s.content;
+          sourcesEl.appendChild(d);
+        });
+        resultEl.style.display = "block";
+      } catch (e) {
+        setStatus(askStatus, "✕ " + e.message, "err");
+      } finally { askBtn.disabled = !hasCorpus ? true : false; }
+    });
+
+    questionEl.addEventListener("keydown", (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !askBtn.disabled) askBtn.click();
+    });
+
+    checkReadiness();
+  </script>
+</body>
+</html>

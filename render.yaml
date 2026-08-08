@@ -1,0 +1,45 @@
+# Render Blueprint — deploy the whole demo (web UI + API + cleanup) for free.
+# Database is external (Neon); set the three secrets in the Render dashboard.
+# See DEPLOY.md for step-by-step instructions.
+
+services:
+  # The FastAPI service: JSON API + built-in web UI at /.
+  - type: web
+    name: ragchat
+    runtime: docker
+    dockerfilePath: ./docker/Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL          # Neon pooled connection string (sslmode=require)
+        sync: false
+      - key: COHERE_API_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: SESSION_TTL_HOURS
+        value: "24"
+      - key: DAILY_REQUEST_BUDGET
+        value: "1000"
+      - key: MAX_UPLOAD_BYTES
+        value: "2097152"           # 2 MiB
+      - key: LOG_LEVEL
+        value: "INFO"
+
+  # Hourly cleanup of expired sessions (same image, different command).
+  - type: cron
+    name: ragchat-cleanup
+    runtime: docker
+    dockerfilePath: ./docker/Dockerfile
+    dockerContext: .
+    plan: free
+    schedule: "0 * * * *"          # top of every hour (UTC)
+    dockerCommand: ragchat cleanup
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: COHERE_API_KEY
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
