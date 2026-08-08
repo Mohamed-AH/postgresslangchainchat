@@ -65,11 +65,11 @@ All limits are environment variables you can change in the Render dashboard:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `LLM_MODEL` | `gemini-2.0-flash` | Gemini model; change if your API key doesn't have this one (a `404 NOT_FOUND` on ask means the model name isn't available to your key) |
+| `LLM_MODEL` | `gemini-2.5-flash-lite` | Gemini model. Flash-Lite has the most generous free quota (~15 RPM / 1,000 per day). A `404 NOT_FOUND` means the name isn't available to your key; a `429 RESOURCE_EXHAUSTED` with `limit: 0` means that model has no free-tier allocation for your key — switch models or enable billing. |
 | `SESSION_TTL_HOURS` | `24` | How long uploaded data is retained |
+| `RATE_LIMIT_ASKS_PER_MINUTE` | `10` | Per-session ask limit, kept under the free-tier RPM |
 | `MAX_UPLOAD_BYTES` | `2097152` | Max upload size (2 MiB) |
 | `MAX_SECTIONS_PER_UPLOAD` | `150` | Max chunks per upload |
-| `RATE_LIMIT_ASKS_PER_MINUTE` | `30` | Per-session ask limit |
 | `RATE_LIMIT_INGESTS_PER_HOUR` | `20` | Per-session upload limit |
 | `DAILY_REQUEST_BUDGET` | `1000` | Instance-wide daily op cap protecting your keys (0 = off) |
 

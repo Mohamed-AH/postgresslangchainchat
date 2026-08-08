@@ -44,8 +44,9 @@ class Settings(BaseSettings):
         description="Vector dimension of the embedding model (embed-english-v3.0 -> 1024).",
     )
     llm_model: str = Field(
-        default="gemini-2.0-flash",
-        description="Gemini chat model (override with LLM_MODEL if your key lacks it).",
+        default="gemini-2.5-flash-lite",
+        description="Gemini chat model. Flash-Lite has the most generous free-tier quota; "
+        "override with LLM_MODEL if your key has different access.",
     )
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     retriever_k: int = Field(default=3, ge=1, le=20, description="Documents to retrieve.")
@@ -81,7 +82,10 @@ class Settings(BaseSettings):
 
     # --- Rate limiting & cost control (in-memory; per instance) ------------
     rate_limit_asks_per_minute: int = Field(
-        default=30, ge=1, description="Max /ask calls per session per minute."
+        default=10,
+        ge=1,
+        description="Max /ask calls per session per minute (kept under the Gemini "
+        "free-tier RPM so the shared key isn't throttled).",
     )
     rate_limit_ingests_per_hour: int = Field(
         default=20, ge=1, description="Max uploads per session per hour."
