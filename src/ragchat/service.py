@@ -252,6 +252,42 @@ def _get_providers() -> _Providers:
     return _Providers(settings=settings, embeddings=embeddings, llm=llm)
 
 
+def purge_expired_sessions() -> int:
+    """Delete every session whose retention window has elapsed (relational + vectors).
+
+    Intended to run on a schedule (see the Render cron job / ``ragchat cleanup``). Builds
+    only the embedding model — not the LLM — since dropping a collection needs no LLM.
+    """
+    from ragchat.db.engine import get_session_factory, init_db
+    from ragchat.rag.embeddings import build_embeddings
+    from ragchat.rag.vectorstore import build_vector_store, session_collection_name
+
+    init_db()
+    session_factory = get_session_factory()
+    with session_factory() as db:
+        expired = repository.expired_session_ids(db, datetime.now(UTC))
+
+    if not expired:
+        logger.info("No expired sessions to purge")
+        return 0
+
+    embeddings = build_embeddings()
+    for session_id in expired:
+        try:
+            store = build_vector_store(
+                embeddings, collection_name=session_collection_name(session_id)
+            )
+            store.delete_collection()
+        except Exception:  # pragma: no cover - best effort per session
+            logger.exception("Failed to drop collection for expired session %s", session_id)
+        with session_factory() as db:
+            repository.delete_session(db, session_id)
+            db.commit()
+
+    logger.info("Purged %d expired sessions", len(expired))
+    return len(expired)
+
+
 def build_session_service(session_id: str) -> RAGService:
     """Wire a fully configured, session-scoped :class:`RAGService`."""
     from ragchat.db.engine import get_session_factory, init_db

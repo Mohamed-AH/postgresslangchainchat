@@ -76,6 +76,20 @@ class Settings(BaseSettings):
         default=150, ge=0, description="Overlap between adjacent chunks."
     )
 
+    # --- Rate limiting & cost control (in-memory; per instance) ------------
+    rate_limit_asks_per_minute: int = Field(
+        default=30, ge=1, description="Max /ask calls per session per minute."
+    )
+    rate_limit_ingests_per_hour: int = Field(
+        default=20, ge=1, description="Max uploads per session per hour."
+    )
+    daily_request_budget: int = Field(
+        default=1000,
+        ge=0,
+        description="Max ask+ingest ops/day across the instance (0 = unlimited). "
+        "Protects the shared provider keys from abuse.",
+    )
+
     # --- Observability -----------------------------------------------------
     log_level: str = Field(default="INFO")
 

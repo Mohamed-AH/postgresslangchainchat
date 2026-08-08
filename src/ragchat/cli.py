@@ -62,6 +62,16 @@ def ask(
 
 
 @app.command()
+def cleanup() -> None:
+    """Purge sessions whose retention window has elapsed (run on a schedule)."""
+    configure_logging(get_settings().log_level)
+    from ragchat.service import purge_expired_sessions
+
+    purged = purge_expired_sessions()
+    typer.secho(f"Purged {purged} expired sessions.", fg=typer.colors.GREEN)
+
+
+@app.command()
 def serve(
     host: str = typer.Option("0.0.0.0", help="Bind host."),
     port: int = typer.Option(8000, help="Bind port."),

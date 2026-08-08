@@ -156,11 +156,18 @@ def api_client(
 ) -> Iterator[TestClient]:
     """A FastAPI TestClient with the service + DB dependencies overridden by fakes."""
     from ragchat.api.app import create_app
+    from ragchat.api.guards import DailyBudget, Guards, RateLimiter
     from ragchat.api.routes import get_db_session_factory, get_service
 
     app = create_app()
     app.dependency_overrides[get_service] = lambda: rag_service
     app.dependency_overrides[get_db_session_factory] = lambda: session_factory
+    # Permissive guardrails so ordinary tests don't trip limits (and don't need env).
+    app.state.guards = Guards(
+        ask_limiter=RateLimiter(10_000, 60.0),
+        ingest_limiter=RateLimiter(10_000, 3600.0),
+        daily_budget=DailyBudget(0),
+    )
     # Construct the client WITHOUT the `with` block: entering it would run the real
     # lifespan (which needs a real database). The overridden dependencies suffice.
     yield TestClient(app)

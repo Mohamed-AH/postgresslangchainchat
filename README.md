@@ -69,7 +69,16 @@ curl -s localhost:8000/ask \
   -d '{"question": "What is a VPC?"}' | jq
 ```
 
-Interactive API docs (OpenAPI/Swagger) are at <http://localhost:8000/docs>.
+Open <http://localhost:8000/> for the **web UI** (upload a file, then ask questions with
+sources). Interactive API docs (OpenAPI/Swagger) are at <http://localhost:8000/docs>.
+
+### Deploy it free
+
+The whole thing runs on free tiers — **Render** (web UI + API + an hourly cleanup cron)
+with **Neon** for PostgreSQL + pgvector. A `render.yaml` blueprint is included; see
+**[DEPLOY.md](DEPLOY.md)** for step-by-step instructions. It's multi-tenant (per-session
+isolation), with upload caps, per-session rate limits, a global daily budget, and
+auto-expiring session data to protect the shared API keys.
 
 ### Run locally
 

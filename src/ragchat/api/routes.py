@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, 
 from sqlalchemy import text
 from sqlalchemy.orm import Session as DbSession
 
+from ragchat.api.guards import Guards
 from ragchat.api.schemas import (
     AskRequest,
     AskResponse,
@@ -57,6 +58,43 @@ def get_service(session_id: str = Depends(get_session_id)) -> RAGService:
     return build_session_service(session_id)
 
 
+def _get_guards(request: Request) -> Guards:
+    """Return the instance's guardrails, building them from settings on first use."""
+    guards: Guards | None = getattr(request.app.state, "guards", None)
+    if guards is None:
+        from ragchat.config import get_settings
+
+        guards = Guards.from_settings(get_settings())
+        request.app.state.guards = guards
+    return guards
+
+
+def _too_many(retry_after: int, detail: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail=detail,
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+def rate_limit_ask(request: Request, session_id: str = Depends(get_session_id)) -> None:
+    """Enforce the per-session ask rate limit and the global daily budget."""
+    guards = _get_guards(request)
+    if not guards.ask_limiter.allow(session_id):
+        raise _too_many(60, "Too many questions; slow down and try again shortly.")
+    if not guards.daily_budget.allow():
+        raise _too_many(3600, "The demo's daily request budget is exhausted. Try later.")
+
+
+def rate_limit_ingest(request: Request, session_id: str = Depends(get_session_id)) -> None:
+    """Enforce the per-session upload rate limit and the global daily budget."""
+    guards = _get_guards(request)
+    if not guards.ingest_limiter.allow(session_id):
+        raise _too_many(3600, "Too many uploads; try again later.")
+    if not guards.daily_budget.allow():
+        raise _too_many(3600, "The demo's daily request budget is exhausted. Try later.")
+
+
 def get_db_session_factory() -> Callable[[], DbSession]:
     """Provide the DB session factory for the readiness probe (no LLM providers).
 
@@ -92,7 +130,12 @@ def health(
     return HealthResponse(status="ok")
 
 
-@router.post("/ask", response_model=AskResponse, tags=["qa"])
+@router.post(
+    "/ask",
+    response_model=AskResponse,
+    tags=["qa"],
+    dependencies=[Depends(rate_limit_ask)],
+)
 def ask(payload: AskRequest, service: RAGService = Depends(get_service)) -> AskResponse:
     """Answer a question using retrieval-augmented generation over the caller's session."""
     try:
@@ -107,7 +150,12 @@ def ask(payload: AskRequest, service: RAGService = Depends(get_service)) -> AskR
     )
 
 
-@router.post("/ingest/file", response_model=IngestResponse, tags=["ingest"])
+@router.post(
+    "/ingest/file",
+    response_model=IngestResponse,
+    tags=["ingest"],
+    dependencies=[Depends(rate_limit_ingest)],
+)
 async def ingest_file(
     file: UploadFile = File(...),
     service: RAGService = Depends(get_service),
