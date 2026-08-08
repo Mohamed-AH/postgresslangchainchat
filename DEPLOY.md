@@ -7,9 +7,12 @@ auto-expiring session data.
 
 ```
 Browser ─► Render web service (FastAPI + built-in UI)  ─►  Neon (Postgres + pgvector)
-                     ▲
-          Render cron ─ ragchat cleanup (hourly) purges expired sessions
+                                                              ▲
+          GitHub Actions (hourly) ─ ragchat cleanup ─────────┘  purges expired sessions
 ```
+
+Render's free tier has no cron jobs, so scheduled cleanup runs as a **GitHub Actions**
+workflow that connects straight to Neon (step 3).
 
 ## 1. Create the database (Neon)
 
@@ -28,9 +31,9 @@ first request after idle takes ~1 s). Session data auto-expires, so storage stay
 
 1. Push this repo to GitHub (already done for this branch).
 2. In Render, **New → Blueprint** and point it at the repo. It reads `render.yaml` and
-   creates two services: `ragchat` (web) and `ragchat-cleanup` (hourly cron).
-3. Set these **secret** environment variables on **both** services (marked `sync:false`,
-   so Render prompts for them — they are never committed):
+   creates the `ragchat` web service.
+3. Set these **secret** environment variables on the service (marked `sync:false`, so
+   Render prompts for them — they are never committed):
    - `DATABASE_URL` — the Neon pooled string from step 1
    - `COHERE_API_KEY`
    - `GOOGLE_API_KEY`
@@ -40,12 +43,23 @@ first request after idle takes ~1 s). Session data auto-expires, so storage stay
 The free web service spins down after ~15 minutes idle and takes ~1 minute to wake; the
 UI shows a "waking up" banner during that window.
 
-> If Render cron isn't available on your plan, delete the `cron` service from
-> `render.yaml` and instead run cleanup on any external free scheduler that can execute
-> `ragchat cleanup` (or trigger it manually) — expired data is otherwise only reclaimed
-> on the next run.
+## 3. Schedule cleanup (GitHub Actions)
 
-## 3. Tuning (no redeploy needed)
+Render's free tier has no cron, so expired sessions are reclaimed by the
+`.github/workflows/cleanup.yml` workflow (hourly + a manual "Run workflow" button). It
+connects directly to Neon and needs **only the database URL** — dropping expired
+collections computes no embeddings, so your provider keys aren't required.
+
+1. In the GitHub repo: **Settings → Secrets and variables → Actions → New repository
+   secret** → add `DATABASE_URL` with the same Neon pooled string.
+2. That's it. The workflow runs hourly; you can also trigger it from the **Actions** tab
+   (**Cleanup expired sessions → Run workflow**) to verify it.
+
+> Prefer daily instead of hourly? Change the `cron:` line in the workflow to `0 3 * * *`.
+> On a **private** repo, Actions minutes are quota-limited — daily keeps usage minimal;
+> public repos get unlimited minutes.
+
+## 4. Tuning (no redeploy needed)
 
 All limits are environment variables you can change in the Render dashboard:
 

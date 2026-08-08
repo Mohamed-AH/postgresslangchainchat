@@ -255,14 +255,18 @@ def _get_providers() -> _Providers:
 def purge_expired_sessions() -> int:
     """Delete every session whose retention window has elapsed (relational + vectors).
 
-    Intended to run on a schedule (see the Render cron job / ``ragchat cleanup``). Builds
-    only the embedding model — not the LLM — since dropping a collection needs no LLM.
+    Intended to run on a schedule (see the GitHub Actions cleanup workflow /
+    ``ragchat cleanup``). Dropping a collection needs no embedding calls, so a no-op
+    embedding is used instead of a real provider — the scheduled job therefore requires
+    only ``DATABASE_URL``, not the Cohere/Gemini keys.
     """
+    from langchain_core.embeddings import DeterministicFakeEmbedding
+
     from ragchat.db.engine import get_session_factory, init_db
-    from ragchat.rag.embeddings import build_embeddings
     from ragchat.rag.vectorstore import build_vector_store, session_collection_name
 
     init_db()
+    settings = get_settings()
     session_factory = get_session_factory()
     with session_factory() as db:
         expired = repository.expired_session_ids(db, datetime.now(UTC))
@@ -271,11 +275,13 @@ def purge_expired_sessions() -> int:
         logger.info("No expired sessions to purge")
         return 0
 
-    embeddings = build_embeddings()
+    # Placeholder embedding: only needed to satisfy the vector store constructor; no
+    # embedding is ever computed on the delete path.
+    embeddings = DeterministicFakeEmbedding(size=settings.embedding_dimension)
     for session_id in expired:
         try:
             store = build_vector_store(
-                embeddings, collection_name=session_collection_name(session_id)
+                embeddings, settings, collection_name=session_collection_name(session_id)
             )
             store.delete_collection()
         except Exception:  # pragma: no cover - best effort per session
