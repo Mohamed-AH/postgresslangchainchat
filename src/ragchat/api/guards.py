@@ -1,9 +1,15 @@
-"""In-memory rate limiting and a global daily budget.
+"""Guardrails for the cost-incurring endpoints.
 
-These protect the shared provider keys (Phase 1 runs on our Cohere/Gemini keys) from a
-single session hammering the service or the instance's daily cost running away. State is
-process-local, which is the right trade-off for a single free-tier instance; a multi-
-instance deployment would back these with Redis (the interface would not change).
+Two layers, deliberately different in where their state lives:
+
+* **Burst rate limiting** — a short fixed window (per minute/hour), kept in memory: a
+  restart harmlessly resets it, and it only shapes bursts.
+* **Daily limits** — the per-user free allowance and the instance-wide budget are *counts
+  per day*, so they are enforced against durable counters in the database (see
+  ``repository.bump_usage``); the numbers and the IP-hash salt are carried here.
+
+All of this protects the shared provider keys (Phase 1). Users who bring their own keys
+bypass every layer, since they spend their own quota.
 """
 
 from __future__ import annotations
@@ -16,7 +22,7 @@ from ragchat.config import Settings
 
 
 class RateLimiter:
-    """Fixed-window rate limiter keyed by an arbitrary string (e.g. a session id)."""
+    """In-memory fixed-window rate limiter keyed by an arbitrary string."""
 
     def __init__(self, limit: int, window_seconds: float) -> None:
         self._limit = limit
@@ -36,40 +42,24 @@ class RateLimiter:
             return count <= self._limit
 
 
-class DailyBudget:
-    """A global cap on operations per UTC day (0 == unlimited)."""
-
-    def __init__(self, budget: int) -> None:
-        self._budget = budget
-        self._lock = threading.Lock()
-        self._day: int = -1
-        self._count = 0
-
-    def allow(self, *, now: float | None = None) -> bool:
-        """Return True if the instance is under budget for the current day."""
-        if self._budget <= 0:
-            return True
-        now = time.time() if now is None else now
-        day = int(now // 86400)
-        with self._lock:
-            if day != self._day:
-                self._day, self._count = day, 0
-            self._count += 1
-            return self._count <= self._budget
-
-
 @dataclass
 class Guards:
-    """Bundle of the guardrails applied to cost-incurring endpoints."""
+    """Burst limiters (in-memory) plus the daily-limit numbers (enforced via the DB)."""
 
     ask_limiter: RateLimiter
     ingest_limiter: RateLimiter
-    daily_budget: DailyBudget
+    daily_free_allowance: int  # shared-key asks/day per user (0 = unlimited)
+    daily_budget: int  # shared-key asks/day across the instance (0 = unlimited)
+    hash_salt: str  # salt for hashing client IPs before storing usage
+    trusted_proxy_hops: int = 1  # reverse-proxy hops in front of the app (Render = 1)
 
     @classmethod
     def from_settings(cls, settings: Settings) -> Guards:
         return cls(
             ask_limiter=RateLimiter(settings.rate_limit_asks_per_minute, 60.0),
             ingest_limiter=RateLimiter(settings.rate_limit_ingests_per_hour, 3600.0),
-            daily_budget=DailyBudget(settings.daily_request_budget),
+            daily_free_allowance=settings.daily_free_allowance,
+            daily_budget=settings.daily_request_budget,
+            hash_salt=settings.usage_hash_salt.get_secret_value(),
+            trusted_proxy_hops=settings.trusted_proxy_hops,
         )

@@ -94,8 +94,26 @@ class Settings(BaseSettings):
     daily_request_budget: int = Field(
         default=1000,
         ge=0,
-        description="Max ask+ingest ops/day across the instance (0 = unlimited). "
-        "Protects the shared provider keys from abuse.",
+        description="Max shared-key asks/day across the whole instance (0 = unlimited). "
+        "The absolute cost ceiling that keeps usage within the provider free tier.",
+    )
+    daily_free_allowance: int = Field(
+        default=10,
+        ge=0,
+        description="Free shared-key asks/day per user before they must supply their own "
+        "keys (0 = unlimited). Enforced per hashed-IP + cookie.",
+    )
+    usage_hash_salt: SecretStr = Field(
+        default=SecretStr("change-me-in-prod"),
+        description="Salt for hashing client IPs before storing usage counters (privacy). "
+        "Set a real secret in production.",
+    )
+    trusted_proxy_hops: int = Field(
+        default=1,
+        ge=1,
+        description="Number of trusted reverse-proxy hops in front of the app (Render = 1). "
+        "Used to read the real client IP from the right of X-Forwarded-For, resisting "
+        "client-spoofed values.",
     )
 
     # --- Observability -----------------------------------------------------

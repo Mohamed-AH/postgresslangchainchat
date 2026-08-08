@@ -9,11 +9,12 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
+from typing import Any, cast
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import CursorResult, delete, func, select
 from sqlalchemy.orm import Session as DbSession
 
-from ragchat.db.models import KnowledgeBase, Session
+from ragchat.db.models import KnowledgeBase, Session, UsageCounter
 from ragchat.ingestion.parser import Section
 
 # --- Sessions -------------------------------------------------------------
@@ -80,3 +81,30 @@ def get_all_sections(db: DbSession, session_id: str) -> list[Section]:
     )
     rows = db.execute(stmt).scalars().all()
     return [Section(title=row.title, content=row.content) for row in rows]
+
+
+# --- Usage counters (durable daily metering) ------------------------------
+
+
+def bump_usage(db: DbSession, scope: str, day: str) -> int:
+    """Increment and return the counter for ``(scope, day)``, creating it if needed.
+
+    Read-modify-write within the caller's transaction. On a single instance with short
+    transactions this is sufficient; a multi-instance deployment would use an atomic
+    upsert (or Redis) instead.
+    """
+    row = db.get(UsageCounter, (scope, day))
+    if row is None:
+        row = UsageCounter(scope=scope, day=day, count=0)
+        db.add(row)
+    row.count += 1
+    db.flush()
+    return row.count
+
+
+def delete_usage_before(db: DbSession, day: str) -> int:
+    """Delete usage rows for days strictly before ``day``; return how many were removed."""
+    result = cast(
+        "CursorResult[Any]", db.execute(delete(UsageCounter).where(UsageCounter.day < day))
+    )
+    return result.rowcount or 0

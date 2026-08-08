@@ -97,11 +97,17 @@ neither is a place bugs can hide.
   (`FakeListChatModel`, a fake retriever, a fake vector store), keeping tests fast and
   free of network, secrets, and flakiness.
 - An **opt-in** integration test against a live pgvector container can be added behind the
-  `integration` pytest marker (deselected by default) when you want end-to-end coverage.
+  `integration` pytest marker — deselected by default and run in a dedicated CI job that
+  stands up a `pgvector` service container (a real ingest → similarity search → purge).
+
+Schema is managed by **Alembic** with an auto-bootstrap in `init_db()`: a fresh or legacy
+`create_all` database is created/adopted and stamped at head; subsequent migrations upgrade
+in place. New revisions are authored with `alembic revision --autogenerate`.
 
 ## Possible next steps
 
-- Chunking/overlap strategy for long sections and richer source metadata.
+- Real authentication (accounts / magic-link) for hard per-user limits beyond the
+  best-effort hashed-IP + cookie allowance.
 - Streaming token responses from the `/ask` endpoint.
 - A retrieval-quality evaluation harness (golden Q&A set) wired into CI.
 - pgvector HNSW index tuning if the corpus grows by orders of magnitude.

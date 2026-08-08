@@ -19,6 +19,7 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "sqlalchemy>=2.0",
+    "alembic>=1.13",
     "psycopg[binary]>=3.1",
     "langchain>=0.2",
     "langchain-core>=0.2",
@@ -50,7 +51,13 @@ Repository = "https://github.com/Mohamed-AH/postgresslangchainchat"
 where = ["src"]
 
 [tool.setuptools.package-data]
-ragchat = ["py.typed", "api/static/*.html"]
+ragchat = [
+    "py.typed",
+    "api/static/*.html",
+    "migrations/*.py",
+    "migrations/*.mako",
+    "migrations/versions/*.py",
+]
 
 # ---------------------------------------------------------------------------
 # Quality tooling
@@ -86,7 +93,9 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra -q --strict-markers"
+# Integration tests need a live pgvector DB, so they're deselected by default; run them
+# explicitly with `pytest -m integration` (the CI integration job does this).
+addopts = "-ra -q --strict-markers -m 'not integration'"
 markers = [
     "integration: tests that require a live PostgreSQL + pgvector instance (deselected by default)",
 ]

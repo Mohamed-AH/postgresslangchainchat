@@ -70,13 +70,38 @@ All limits are environment variables you can change in the Render dashboard:
 | `RATE_LIMIT_ASKS_PER_MINUTE` | `10` | Per-session ask limit, kept under the free-tier RPM |
 | `MAX_UPLOAD_BYTES` | `2097152` | Max upload size (2 MiB) |
 | `MAX_SECTIONS_PER_UPLOAD` | `150` | Max chunks per upload |
-| `RATE_LIMIT_INGESTS_PER_HOUR` | `20` | Per-session upload limit |
-| `DAILY_REQUEST_BUDGET` | `1000` | Instance-wide daily op cap protecting your keys (0 = off) |
+| `RATE_LIMIT_INGESTS_PER_HOUR` | `20` | Per-session upload burst limit |
+| `DAILY_FREE_ALLOWANCE` | `10` | Free shared-key asks/day **per user** before they're prompted for their own keys (0 = unlimited) |
+| `DAILY_REQUEST_BUDGET` | `1000` | Instance-wide shared-key asks/day — the absolute cost ceiling (0 = off) |
+| `USAGE_HASH_SALT` | `change-me-in-prod` | Secret salt for hashing client IPs in usage counters; set a real value |
+| `TRUSTED_PROXY_HOPS` | `1` | Reverse-proxy hops in front of the app (Render = 1). The real client IP is read that many entries from the right of `X-Forwarded-For`, so client-prepended values can't spoof a fresh allowance. |
+
+## Usage limits & bring-your-own-keys
+
+Each visitor gets `DAILY_FREE_ALLOWANCE` shared-key questions per day (counted per
+salted-hashed IP + cookie, stored durably in Postgres so limits survive restarts). When
+that's used up, the UI prompts for the visitor's **own** Cohere + Gemini keys, which are
+sent per request (headers `X-Cohere-Api-Key` / `X-Google-Api-Key`) and **never stored or
+logged**; BYO requests bypass the shared-key limits. `DAILY_REQUEST_BUDGET` is the
+instance-wide backstop that guarantees total shared-key usage stays within the provider
+free tier no matter what.
 
 ## Caveats (by design, for a free demo)
 
 - **Cold starts** on both Render and Neon after idle — expected; surfaced in the UI.
-- **Rate limits/budget are per-instance** (in-memory). The free tier is a single
-  instance, so this is fine; a multi-instance deployment would back them with Redis.
-- **Schema changes** need a fresh database or a migration — `create_all` does not alter
-  existing tables. Alembic is the intended follow-up.
+- **Daily limits are durable** (Postgres) so they survive restarts; the short *burst*
+  limiter is in-memory (harmless to reset). A multi-instance deployment would move the
+  burst limiter to Redis.
+- **Best-effort identity.** Client IPs are read from the right of `X-Forwarded-For`
+  (`TRUSTED_PROXY_HOPS`), so prepended values can't spoof a new allowance; but without
+  accounts the allowance can still be evaded (fresh cookies, IP rotation), which is why
+  `DAILY_REQUEST_BUDGET` is the real cost ceiling. Real auth is the next step for stronger
+  per-user limits.
+- **BYO keys are never logged or stored.** They're read from request headers only and
+  passed straight to the provider clients; the app logs no request headers, and configured
+  keys are `SecretStr` (masked in reprs).
+- **Schema is managed by Alembic**, applied automatically on startup: a fresh (or legacy
+  `create_all`) database is created/adopted and stamped; later migrations upgrade in place.
+  To author a change after editing the models: `alembic revision --autogenerate -m "..."`,
+  review the generated file in `src/ragchat/migrations/versions/`, and commit it — the app
+  applies it on the next deploy. No manual step is needed on your existing database.

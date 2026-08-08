@@ -63,6 +63,17 @@
     footer { color: var(--muted); font-size: 12.5px; text-align: center; margin-top: 28px; }
     footer code { background: var(--chip); padding: 1px 6px; border-radius: 6px; }
     a { color: var(--accent); }
+    button.secondary { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+    .keys summary { list-style: none; cursor: pointer; font-size: 14px; color: var(--muted); }
+    .keys summary::-webkit-details-marker { display: none; }
+    .keys[open] summary { color: var(--ink); font-weight: 600; margin-bottom: 8px; }
+    .keys input { flex: 1 1 220px; min-width: 0; padding: 10px 12px; border: 1px solid var(--line);
+      border-radius: 10px; background: transparent; color: var(--ink); font: inherit; }
+    .pill { display: inline-block; font-size: 12px; padding: 2px 9px; border-radius: 999px;
+      background: var(--chip); color: var(--muted); margin-left: 6px; }
+    .pill.own { background: #e7f4ec; color: var(--ok); }
+    @media (prefers-color-scheme: dark) { .pill.own { background: #12331f; color: var(--ok); } }
+    .remaining { color: var(--muted); font-size: 13px; margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -73,6 +84,28 @@
     </header>
 
     <div id="banner" class="banner"></div>
+
+    <details id="keysPanel" class="card keys">
+      <summary>Mode: <span id="modeLabel" class="pill">shared demo keys</span> — click to use your own</summary>
+      <p class="hint">
+        The demo runs on shared free-tier keys with a small daily limit per visitor.
+        Enter your own keys to remove the limit — they're sent only with your requests and
+        <strong>never stored on the server</strong>.
+        Get them from
+        <a href="https://dashboard.cohere.com/api-keys" target="_blank" rel="noopener">Cohere</a>
+        and
+        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a>.
+      </p>
+      <div class="row">
+        <input id="cohereKey" type="password" placeholder="Cohere API key" autocomplete="off" />
+        <input id="googleKey" type="password" placeholder="Google Gemini API key" autocomplete="off" />
+      </div>
+      <div class="row" style="margin-top:10px; align-items:center;">
+        <button id="saveKeys">Use my keys</button>
+        <button id="clearKeys" class="secondary">Clear</button>
+        <span id="keysStatus" class="hint"></span>
+      </div>
+    </details>
 
     <section class="card">
       <h2><span class="step">1</span>Add a source</h2>
@@ -91,6 +124,7 @@
         <button id="askBtn" disabled>Ask</button>
       </div>
       <div id="askStatus" class="status"></div>
+      <div id="remaining" class="remaining"></div>
       <div id="result" style="display:none;">
         <p class="answer" id="answer"></p>
         <div class="sources" id="sources"></div>
@@ -108,10 +142,55 @@
     const fileEl = $("file"), ingestBtn = $("ingestBtn"), ingestStatus = $("ingestStatus");
     const questionEl = $("question"), askBtn = $("askBtn"), askStatus = $("askStatus");
     const resultEl = $("result"), answerEl = $("answer"), sourcesEl = $("sources"), banner = $("banner");
+    const remainingEl = $("remaining"), keysPanel = $("keysPanel"), modeLabel = $("modeLabel");
+    const cohereKeyEl = $("cohereKey"), googleKeyEl = $("googleKey"), keysStatus = $("keysStatus");
     let hasCorpus = false;
 
     function setStatus(el, msg, kind) { el.className = "status" + (kind ? " " + kind : ""); el.innerHTML = msg; }
     function spinner(text) { return '<span class="spinner"></span>' + text; }
+    function detailText(data) {
+      const d = data && data.detail;
+      if (!d) return "";
+      return typeof d === "string" ? d : (d.message || JSON.stringify(d));
+    }
+
+    // --- Bring-your-own keys (kept per-tab; sent as headers, never stored server-side) ---
+    const byo = {
+      cohere: sessionStorage.getItem("cohereKey") || "",
+      google: sessionStorage.getItem("googleKey") || "",
+    };
+    const hasKeys = () => Boolean(byo.cohere && byo.google);
+    function authHeaders() {
+      return hasKeys()
+        ? { "X-Cohere-Api-Key": byo.cohere, "X-Google-Api-Key": byo.google }
+        : {};
+    }
+    function refreshMode() {
+      if (hasKeys()) {
+        modeLabel.textContent = "your own keys";
+        modeLabel.className = "pill own";
+        cohereKeyEl.value = byo.cohere; googleKeyEl.value = byo.google;
+      } else {
+        modeLabel.textContent = "shared demo keys";
+        modeLabel.className = "pill";
+      }
+    }
+    $("saveKeys").addEventListener("click", () => {
+      byo.cohere = cohereKeyEl.value.trim(); byo.google = googleKeyEl.value.trim();
+      if (!hasKeys()) { keysStatus.textContent = "Enter both keys."; return; }
+      sessionStorage.setItem("cohereKey", byo.cohere);
+      sessionStorage.setItem("googleKey", byo.google);
+      keysStatus.textContent = "✓ Using your keys (this tab only).";
+      refreshMode();
+    });
+    $("clearKeys").addEventListener("click", () => {
+      byo.cohere = ""; byo.google = "";
+      sessionStorage.removeItem("cohereKey"); sessionStorage.removeItem("googleKey");
+      cohereKeyEl.value = ""; googleKeyEl.value = "";
+      keysStatus.textContent = "Cleared — back to shared keys.";
+      refreshMode();
+    });
+    refreshMode();
 
     async function checkReadiness() {
       try {
@@ -132,9 +211,9 @@
       setStatus(ingestStatus, spinner("Ingesting & embedding “" + file.name + "”…"));
       try {
         const form = new FormData(); form.append("file", file);
-        const r = await fetch("/ingest/file", { method: "POST", body: form });
+        const r = await fetch("/ingest/file", { method: "POST", body: form, headers: authHeaders() });
         const data = await r.json();
-        if (!r.ok) throw new Error(data.detail || ("Error " + r.status));
+        if (!r.ok) throw new Error(detailText(data) || ("Error " + r.status));
         hasCorpus = true; askBtn.disabled = false;
         setStatus(ingestStatus, "✓ Ingested " + data.sections_written + " sections. Ask away below.", "ok");
       } catch (e) {
@@ -149,12 +228,22 @@
       setStatus(askStatus, spinner("Thinking…"));
       try {
         const r = await fetch("/ask", {
-          method: "POST", headers: { "content-type": "application/json" },
+          method: "POST",
+          headers: { "content-type": "application/json", ...authHeaders() },
           body: JSON.stringify({ question: q }),
         });
         const data = await r.json();
-        if (!r.ok) throw new Error(data.detail || ("Error " + r.status));
+        if (r.status === 429 && data.detail && data.detail.byok_required) {
+          setStatus(askStatus, "✕ " + data.detail.message, "err");
+          keysPanel.open = true;
+          keysPanel.scrollIntoView({ behavior: "smooth", block: "center" });
+          return;
+        }
+        if (!r.ok) throw new Error(detailText(data) || ("Error " + r.status));
         setStatus(askStatus, "");
+        const left = r.headers.get("X-Free-Remaining");
+        remainingEl.textContent =
+          left !== null ? `${left} free question${left === "1" ? "" : "s"} left today (or add your own keys).` : "";
         answerEl.textContent = data.answer;
         sourcesEl.innerHTML = "<strong>Sources (" + data.sources.length + ")</strong>";
         data.sources.forEach((s, i) => {

@@ -59,3 +59,20 @@ class KnowledgeBase(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"KnowledgeBase(id={self.id!r}, session_id={self.session_id!r})"
+
+
+class UsageCounter(Base):
+    """Durable per-day usage counter keyed by scope (e.g. ``ip:<hash>`` or ``global``).
+
+    Lives in the database (not memory) so daily limits survive the free tier's frequent
+    restarts — otherwise every cold start would reset everyone's allowance.
+    """
+
+    __tablename__ = "usage_counters"
+
+    scope: Mapped[str] = mapped_column(String(96), primary_key=True)
+    day: Mapped[str] = mapped_column(String(10), primary_key=True)  # "YYYY-MM-DD" (UTC)
+    count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"UsageCounter(scope={self.scope!r}, day={self.day!r}, count={self.count!r})"
