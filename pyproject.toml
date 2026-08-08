@@ -19,6 +19,7 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "sqlalchemy>=2.0",
+    "alembic>=1.13",
     "psycopg[binary]>=3.1",
     "langchain>=0.2",
     "langchain-core>=0.2",
@@ -50,7 +51,13 @@ Repository = "https://github.com/Mohamed-AH/postgresslangchainchat"
 where = ["src"]
 
 [tool.setuptools.package-data]
-ragchat = ["py.typed", "api/static/*.html"]
+ragchat = [
+    "py.typed",
+    "api/static/*.html",
+    "migrations/*.py",
+    "migrations/*.mako",
+    "migrations/versions/*.py",
+]
 
 # ---------------------------------------------------------------------------
 # Quality tooling

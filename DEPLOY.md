@@ -100,5 +100,8 @@ free tier no matter what.
 - **BYO keys are never logged or stored.** They're read from request headers only and
   passed straight to the provider clients; the app logs no request headers, and configured
   keys are `SecretStr` (masked in reprs).
-- **Schema changes** need a fresh database or a migration — `create_all` does not alter
-  existing tables. Alembic is the intended follow-up.
+- **Schema is managed by Alembic**, applied automatically on startup: a fresh (or legacy
+  `create_all`) database is created/adopted and stamped; later migrations upgrade in place.
+  To author a change after editing the models: `alembic revision --autogenerate -m "..."`,
+  review the generated file in `src/ragchat/migrations/versions/`, and commit it — the app
+  applies it on the next deploy. No manual step is needed on your existing database.
