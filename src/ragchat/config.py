@@ -44,9 +44,10 @@ class Settings(BaseSettings):
         description="Vector dimension of the embedding model (embed-english-v3.0 -> 1024).",
     )
     llm_model: str = Field(
-        default="gemini-flash-latest",
-        description="Gemini chat model. Defaults to the 'flash-latest' alias so it keeps "
-        "resolving to a current model as Google rotates versions; override with LLM_MODEL.",
+        default="gemini-flash-lite-latest",
+        description="Gemini chat model. Defaults to the 'flash-lite-latest' alias: the "
+        "lite tier has the most generous free quota and the alias tracks a current model "
+        "as Google rotates versions; override with LLM_MODEL.",
     )
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     retriever_k: int = Field(default=3, ge=1, le=20, description="Documents to retrieve.")

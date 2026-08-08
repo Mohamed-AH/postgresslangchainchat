@@ -65,7 +65,7 @@ All limits are environment variables you can change in the Render dashboard:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `LLM_MODEL` | `gemini-flash-latest` | Gemini model. Defaults to the `flash-latest` alias so it survives Google's version rotation. A `404 NOT_FOUND` means the name isn't available to your key (try `gemini-2.5-flash` or `gemini-flash-latest`); a `429 RESOURCE_EXHAUSTED` with `limit: 0` means that model has no free-tier allocation for your key — switch models or enable billing. List your key's models: `curl "https://generativelanguage.googleapis.com/v1beta/models?key=$GOOGLE_API_KEY"`. |
+| `LLM_MODEL` | `gemini-flash-lite-latest` | Gemini model. Defaults to the `flash-lite-latest` alias: the lite tier has the most generous free quota and the alias survives Google's version rotation. A `404 NOT_FOUND` means the name isn't available to your key (try `gemini-flash-latest` or `gemini-2.5-flash`); a `429 RESOURCE_EXHAUSTED` with `limit: 0` means that model has no free-tier allocation for your key — switch models or enable billing. List your key's models: `curl "https://generativelanguage.googleapis.com/v1beta/models?key=$GOOGLE_API_KEY"`. |
 | `SESSION_TTL_HOURS` | `24` | How long uploaded data is retained |
 | `RATE_LIMIT_ASKS_PER_MINUTE` | `10` | Per-session ask limit, kept under the free-tier RPM |
 | `MAX_UPLOAD_BYTES` | `2097152` | Max upload size (2 MiB) |
