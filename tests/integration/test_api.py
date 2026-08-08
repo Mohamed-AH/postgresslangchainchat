@@ -65,6 +65,13 @@ def test_ingest_file_rejects_unsupported_type(api_client) -> None:
     assert response.status_code == 415
 
 
+def test_index_serves_web_ui(api_client) -> None:
+    response = api_client.get("/")
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "ragchat" in response.text
+
+
 def test_openapi_schema_is_served(api_client) -> None:
     response = api_client.get("/openapi.json")
     assert response.status_code == 200

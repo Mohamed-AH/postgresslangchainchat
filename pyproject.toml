@@ -50,7 +50,7 @@ Repository = "https://github.com/Mohamed-AH/postgresslangchainchat"
 where = ["src"]
 
 [tool.setuptools.package-data]
-ragchat = ["py.typed"]
+ragchat = ["py.typed", "api/static/*.html"]
 
 # ---------------------------------------------------------------------------
 # Quality tooling
