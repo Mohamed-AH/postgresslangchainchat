@@ -32,6 +32,8 @@ from sqlalchemy.orm import Session
 
 from ragchat.config import Settings, get_settings
 from ragchat.db import repository
+from ragchat.errors import FileTooLargeError, TooManySectionsError
+from ragchat.ingestion.extractors import extract_sections
 from ragchat.ingestion.parser import Section, parse_markdown_file
 
 logger = logging.getLogger(__name__)
@@ -60,6 +62,16 @@ class IngestResult:
     sections_written: int
 
 
+@dataclass(frozen=True, slots=True)
+class IngestLimits:
+    """Upload guardrails applied before any embedding work (and cost) happens."""
+
+    max_upload_bytes: int = 2 * 1024 * 1024
+    max_sections: int = 150
+    chunk_max_chars: int = 1200
+    chunk_overlap: int = 150
+
+
 class RAGService:
     """Coordinates ingestion and question answering for a single session."""
 
@@ -71,16 +83,22 @@ class RAGService:
         vector_store: Any,  # PGVector in production; a test double in tests
         chain: Runnable[str, dict[str, Any]],
         ttl_hours: int = 24,
+        limits: IngestLimits | None = None,
     ) -> None:
         self._session_id = session_id
         self._session_factory = session_factory
         self._vector_store = vector_store
         self._chain = chain
         self._ttl_hours = ttl_hours
+        self._limits = limits or IngestLimits()
 
     @property
     def session_id(self) -> str:
         return self._session_id
+
+    @property
+    def max_upload_bytes(self) -> int:
+        return self._limits.max_upload_bytes
 
     # -- Ingestion ---------------------------------------------------------
     def ingest_sections(self, sections: Sequence[Section]) -> IngestResult:
@@ -127,9 +145,33 @@ class RAGService:
             db.close()
 
     def ingest_markdown_file(self, path: str | Path) -> IngestResult:
-        """Parse a markdown file and ingest its sections."""
+        """Parse a markdown file and ingest its sections (CLI/admin path)."""
         sections = parse_markdown_file(path)
         logger.info("Parsed %d sections from %s", len(sections), path)
+        return self.ingest_sections(sections)
+
+    def ingest_upload(self, filename: str, data: bytes) -> IngestResult:
+        """Ingest an uploaded file (.md/.txt/.pdf/.docx), enforcing size/section caps.
+
+        Caps are checked *before* any embedding call so an oversized or malicious upload
+        can't run up provider cost. Raises the typed errors in :mod:`ragchat.errors`.
+        """
+        if len(data) > self._limits.max_upload_bytes:
+            raise FileTooLargeError(
+                f"File is {len(data)} bytes; limit is {self._limits.max_upload_bytes}."
+            )
+        sections = extract_sections(
+            filename,
+            data,
+            chunk_max_chars=self._limits.chunk_max_chars,
+            chunk_overlap=self._limits.chunk_overlap,
+        )
+        if len(sections) > self._limits.max_sections:
+            raise TooManySectionsError(
+                f"Upload produced {len(sections)} sections; limit is "
+                f"{self._limits.max_sections}. Try a smaller file."
+            )
+        logger.info("Extracted %d sections from upload %s", len(sections), filename)
         return self.ingest_sections(sections)
 
     # -- Querying ----------------------------------------------------------
@@ -232,4 +274,10 @@ def build_session_service(session_id: str) -> RAGService:
         vector_store=vector_store,
         chain=chain,
         ttl_hours=providers.settings.session_ttl_hours,
+        limits=IngestLimits(
+            max_upload_bytes=providers.settings.max_upload_bytes,
+            max_sections=providers.settings.max_sections_per_upload,
+            chunk_max_chars=providers.settings.chunk_max_chars,
+            chunk_overlap=providers.settings.chunk_overlap_chars,
+        ),
     )

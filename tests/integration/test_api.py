@@ -48,7 +48,26 @@ def test_health_returns_503_when_db_unreachable(api_client) -> None:
     assert response.status_code == 503
 
 
+def test_ingest_file_upload_succeeds(api_client) -> None:
+    response = api_client.post(
+        "/ingest/file",
+        files={"file": ("notes.txt", b"Networking notes about VPCs and subnets.", "text/plain")},
+    )
+    assert response.status_code == 200
+    assert response.json()["sections_written"] >= 1
+
+
+def test_ingest_file_rejects_unsupported_type(api_client) -> None:
+    response = api_client.post(
+        "/ingest/file",
+        files={"file": ("archive.zip", b"PK\x03\x04", "application/zip")},
+    )
+    assert response.status_code == 415
+
+
 def test_openapi_schema_is_served(api_client) -> None:
     response = api_client.get("/openapi.json")
     assert response.status_code == 200
-    assert "/ask" in response.json()["paths"]
+    paths = response.json()["paths"]
+    assert "/ask" in paths
+    assert "/ingest/file" in paths

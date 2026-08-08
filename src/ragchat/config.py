@@ -58,6 +58,24 @@ class Settings(BaseSettings):
         description="Hours a hosted session's uploaded data is retained before cleanup.",
     )
 
+    # --- Upload limits (guardrails; env-tunable without a redeploy) --------
+    max_upload_bytes: int = Field(
+        default=2 * 1024 * 1024,
+        ge=1024,
+        description="Maximum accepted upload size in bytes (default 2 MiB).",
+    )
+    max_sections_per_upload: int = Field(
+        default=150,
+        ge=1,
+        description="Maximum sections/chunks a single upload may produce.",
+    )
+    chunk_max_chars: int = Field(
+        default=1200, ge=100, description="Target chunk size for non-markdown documents."
+    )
+    chunk_overlap_chars: int = Field(
+        default=150, ge=0, description="Overlap between adjacent chunks."
+    )
+
     # --- Observability -----------------------------------------------------
     log_level: str = Field(default="INFO")
 

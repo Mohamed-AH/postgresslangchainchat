@@ -85,11 +85,14 @@ ragchat serve                     # start the API
 
 ## API
 
-| Method | Path       | Description |
-|--------|------------|-------------|
-| GET    | `/health`  | Readiness probe — runs `SELECT 1`; returns **503** if the DB is unreachable |
-| POST   | `/ask`     | `{ "question": "..." }` → `{ "answer": "...", "sources": [...] }` |
-| POST   | `/ingest`  | `{ "path": "content.md" }` → rebuilds the knowledge base and vector index |
+Each caller is an isolated **session** (a signed cookie): uploaded content and vectors
+are namespaced per session, so users never see or overwrite each other's data.
+
+| Method | Path            | Description |
+|--------|-----------------|-------------|
+| GET    | `/health`       | Readiness probe — runs `SELECT 1`; returns **503** if the DB is unreachable |
+| POST   | `/ask`          | `{ "question": "..." }` → `{ "answer": "...", "sources": [...] }` (scoped to your session) |
+| POST   | `/ingest/file`  | multipart upload of a `.md`/`.txt`/`.pdf`/`.docx` file → rebuilds your session's knowledge base (size/section caps enforced) |
 
 ---
 

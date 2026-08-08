@@ -31,12 +31,6 @@ class AskResponse(BaseModel):
     sources: list[SourceSchema]
 
 
-class IngestRequest(BaseModel):
-    """Request to (re)ingest a markdown file available to the server."""
-
-    path: str = Field(default="content.md", examples=["content.md"])
-
-
 class IngestResponse(BaseModel):
     """Result of an ingestion run."""
 

@@ -19,10 +19,11 @@ from langchain_core.language_models.fake_chat_models import FakeListChatModel
 from langchain_core.retrievers import BaseRetriever
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from ragchat.db.models import Base
 from ragchat.rag.pipeline import build_rag_chain
-from ragchat.service import RAGService
+from ragchat.service import IngestLimits, RAGService
 
 # --- Fakes ----------------------------------------------------------------
 
@@ -65,8 +66,18 @@ class FakeVectorStore:
 
 @pytest.fixture
 def session_factory() -> Callable[[], Session]:
-    """A real SQLite in-memory session factory with FK cascade enabled."""
-    engine = create_engine("sqlite://", future=True)
+    """A real SQLite in-memory session factory with FK cascade enabled.
+
+    StaticPool + check_same_thread=False keeps a single shared in-memory database across
+    connections/threads, so schema created here is visible to FastAPI's worker-thread
+    handlers (each connection to a plain ``sqlite://`` would otherwise get its own DB).
+    """
+    engine = create_engine(
+        "sqlite://",
+        future=True,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
 
     @event.listens_for(engine, "connect")
     def _enable_fk(dbapi_conn, _record) -> None:  # type: ignore[no-untyped-def]
@@ -113,6 +124,7 @@ def make_service(
         vector_store: FakeVectorStore | None = None,
         documents: list[Document] | None = None,
         answer: str = "A VPC is a private, isolated network in the cloud.",
+        limits: IngestLimits | None = None,
     ) -> RAGService:
         retriever = FakeRetriever(documents=documents or [])
         chain = build_rag_chain(retriever, FakeListChatModel(responses=[answer]))
@@ -122,6 +134,7 @@ def make_service(
             vector_store=vector_store or FakeVectorStore(),
             chain=chain,
             ttl_hours=24,
+            limits=limits,
         )
 
     return _make

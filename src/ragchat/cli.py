@@ -23,14 +23,17 @@ _CLI_SESSION_ID = "default"
 
 @app.command()
 def ingest(
-    path: str = typer.Argument("content.md", help="Path to the markdown file to ingest."),
+    path: str = typer.Argument("content.md", help="File to ingest (.md/.txt/.pdf/.docx)."),
 ) -> None:
-    """Parse a markdown file and (re)build the knowledge base and vector index."""
+    """Ingest a file and (re)build the knowledge base and vector index."""
     configure_logging(get_settings().log_level)
+    from pathlib import Path
+
     from ragchat.service import build_session_service
 
+    file_path = Path(path)
     service = build_session_service(_CLI_SESSION_ID)
-    result = service.ingest_markdown_file(path)
+    result = service.ingest_upload(file_path.name, file_path.read_bytes())
     typer.secho(
         f"Ingested {result.sections_written} sections from {path}.",
         fg=typer.colors.GREEN,

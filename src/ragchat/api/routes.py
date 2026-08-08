@@ -7,7 +7,7 @@ import re
 from collections.abc import Callable
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session as DbSession
 
@@ -15,9 +15,14 @@ from ragchat.api.schemas import (
     AskRequest,
     AskResponse,
     HealthResponse,
-    IngestRequest,
     IngestResponse,
     SourceSchema,
+)
+from ragchat.errors import (
+    EmptyDocumentError,
+    FileTooLargeError,
+    TooManySectionsError,
+    UnsupportedFileTypeError,
 )
 from ragchat.service import RAGService, build_session_service
 
@@ -102,13 +107,35 @@ def ask(payload: AskRequest, service: RAGService = Depends(get_service)) -> AskR
     )
 
 
-@router.post("/ingest", response_model=IngestResponse, tags=["ingest"])
-def ingest(payload: IngestRequest, service: RAGService = Depends(get_service)) -> IngestResponse:
-    """Re-ingest a markdown file available on the server into the caller's knowledge base."""
-    try:
-        result = service.ingest_markdown_file(payload.path)
-    except FileNotFoundError as exc:
+@router.post("/ingest/file", response_model=IngestResponse, tags=["ingest"])
+async def ingest_file(
+    file: UploadFile = File(...),
+    service: RAGService = Depends(get_service),
+) -> IngestResponse:
+    """Upload a file (.md/.txt/.pdf/.docx) and (re)build the caller's knowledge base.
+
+    The read is bounded by the configured size cap, and all caps are enforced before any
+    embedding work happens, so an oversized or unsupported upload never incurs cost.
+    """
+    limit = service.max_upload_bytes
+    data = await file.read(limit + 1)
+    if len(data) > limit:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"File not found: {payload.path}"
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File exceeds the {limit}-byte limit.",
+        )
+    try:
+        result = service.ingest_upload(file.filename or "upload", data)
+    except UnsupportedFileTypeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)
+        ) from exc
+    except FileTooLargeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail=str(exc)
+        ) from exc
+    except (TooManySectionsError, EmptyDocumentError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
     return IngestResponse(sections_written=result.sections_written)
